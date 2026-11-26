@@ -11,8 +11,8 @@ import { createRandom, lerp, range, smoothstep } from './random.js';
 
 const THREE = window.THREE;
 
-/** Fixed sun direction (normalised): warm afternoon light from the west. */
-export const SUN_DIR = new THREE.Vector3(-0.55, 0.62, -0.35).normalize();
+/** Fixed sun direction (normalised): low warm afternoon sun from the west. */
+export const SUN_DIR = new THREE.Vector3(-0.64, 0.38, -0.32).normalize();
 
 const PHASES = { a: 0, b: 0, c: 0, hash: 0 };
 
@@ -162,6 +162,64 @@ function detailTexture() {
   return tex;
 }
 
+/** Procedural rock normal map: value-noise height field run through a Sobel
+ *  filter, tileable so the repeat seams stay invisible at glancing angles. */
+function rockNormalTexture() {
+  const S = 256;
+  const height = new Float32Array(S * S);
+  const cells = 24;
+  const grid = [];
+  for (let i = 0; i <= cells; i++) {
+    grid.push([]);
+    for (let j = 0; j <= cells; j++) grid[i].push(Math.random());
+  }
+  const sample = (x, y) => {
+    const gx = (x / S) * cells;
+    const gy = (y / S) * cells;
+    const ix = Math.floor(gx) % cells;
+    const iy = Math.floor(gy) % cells;
+    const fx = gx - Math.floor(gx);
+    const fy = gy - Math.floor(gy);
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const a = grid[iy][ix];
+    const b = grid[iy][(ix + 1) % cells];
+    const c = grid[(iy + 1) % cells][ix];
+    const d = grid[(iy + 1) % cells][(ix + 1) % cells];
+    return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+  };
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      height[y * S + x] = sample(x, y) * 0.65 + sample((x * 2) % S, (y * 2) % S) * 0.35;
+    }
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const at = (x, y) => height[((y + S) % S) * S + ((x + S) % S)];
+  const strength = 2.2;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = (at(x - 1, y) - at(x + 1, y)) * strength;
+      const dy = (at(x, y - 1) - at(x, y + 1)) * strength;
+      const inv = 1 / Math.hypot(dx, dy, 1);
+      const i = (y * S + x) * 4;
+      img.data[i] = (dx * inv * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (dy * inv * 0.5 + 0.5) * 255;
+      img.data[i + 2] = inv * 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(140, 140);
+  tex.anisotropy = 4;
+  return tex;
+}
+
 /** A soft cumulus puff: clustered radial gradients, shaded blue-grey below. */
 function cloudTexture() {
   return canvasTexture(256, 256, (ctx) => {
@@ -264,6 +322,31 @@ function runwayTexture(number) {
       const v = 46 + Math.floor(Math.random() * 26);
       ctx.fillStyle = `rgb(${v},${v + 3},${v + 7})`;
       ctx.fillRect(Math.random() * w, Math.random() * h, 3, 3);
+    }
+    // Concrete slab joints: transverse seams with a darker tar line.
+    ctx.fillStyle = 'rgba(18,20,24,0.55)';
+    for (let y = 0; y < h; y += 128) ctx.fillRect(0, y, w, 3);
+    ctx.fillRect(w / 2 - 1, 0, 2, h);
+    // Oil stains and rubber deposits around the touchdown zone.
+    for (let i = 0; i < 26; i++) {
+      const x = w * 0.3 + Math.random() * w * 0.4;
+      const y = h * 0.12 + Math.random() * h * 0.3;
+      const r = 8 + Math.random() * 26;
+      const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+      g.addColorStop(0, 'rgba(12,12,14,0.4)');
+      g.addColorStop(1, 'rgba(12,12,14,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Twin tyre streaks worn into the touchdown zone.
+    ctx.fillStyle = 'rgba(10,10,12,0.5)';
+    for (const sx of [w * 0.38, w * 0.62]) {
+      for (let y = h * 0.1; y < h * 0.52; y += 7) {
+        if (Math.random() < 0.22) continue;
+        ctx.fillRect(sx - 4 + (Math.random() - 0.5) * 3, y, 8, 6);
+      }
     }
     ctx.fillStyle = '#e8edf2';
     ctx.fillRect(10, 0, 6, h);
@@ -497,16 +580,25 @@ function buildTerrain() {
   const rock = new THREE.Color(pal.rock ?? COLORS.rock);
   const snow = new THREE.Color(COLORS.snow);
   const sand = new THREE.Color(0xc9b18a);
+  const dirt = new THREE.Color(0x8a6b44);
+  const dryGrass = new THREE.Color(0xa9a44e);
   const c = new THREE.Color();
+  const rockTint = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
     const h = pos.getY(i);
     const slope = 1 - normals.getY(i);
     c.copy(grassLow).lerp(grassHigh, smoothstep(10, 150, h));
-    // Mottled meadow variation so flat ground never reads as one flat colour.
+    // Mottled meadow variation so flat ground never reads as one flat colour:
+    // two noise scales push the hue between deep green and yellow-green.
     const mottle = fbm(x * 0.01, z * 0.01, 2);
-    c.offsetHSL((mottle - 0.5) * 0.02, 0, (mottle - 0.5) * 0.11);
+    c.offsetHSL((mottle - 0.5) * 0.035, 0, (mottle - 0.5) * 0.13);
+    const dry = fbm(x * 0.004 + 9.1, z * 0.004, 2);
+    c.lerp(dryGrass, smoothstep(0.58, 0.78, dry) * smoothstep(0.3, 0.08, slope) * 0.55);
+    // Bare-earth patches where the meadow thins out.
+    const bare = fbm(x * 0.006 + 4.7, z * 0.006 + 1.3, 3);
+    c.lerp(dirt, smoothstep(0.66, 0.8, bare) * smoothstep(0.25, 0.06, slope) * 0.6);
     // Sandy banks near the river.
     const dPath = Math.abs(x - pathX(z));
     c.lerp(sand, smoothstep(26, 10, dPath) * 0.55);
@@ -514,9 +606,12 @@ function buildTerrain() {
     const dLake = Math.hypot(x - LAKE.x, z - LAKE.z);
     const shore = smoothstep(LAKE.r * 1.12, LAKE.r * 0.9, dLake) * smoothstep(LAKE.level - 2.5, LAKE.level + 1.5, h);
     c.lerp(sand, shore * 0.7);
-    // Rock on steep faces and high ground, snow on the calm summits.
-    c.lerp(rock, smoothstep(0.13, 0.38, slope));
-    c.lerp(rock, smoothstep(175, 275, h) * 0.75);
+    // Rock on steep faces and high ground, with sedimentary strata banding
+    // so the cliffs read as layered stone rather than smooth ramps.
+    const rockAmt = Math.max(smoothstep(0.13, 0.38, slope), smoothstep(175, 275, h) * 0.75);
+    const strata = 0.92 + 0.16 * Math.sin(h * 0.11 + fbm(x * 0.002, z * 0.002, 2) * 5.0);
+    rockTint.copy(rock).multiplyScalar(strata);
+    c.lerp(rockTint, rockAmt);
     c.lerp(snow, smoothstep(MAP.snowLine, MAP.snowLine + 95, h) * smoothstep(0.6, 0.32, slope));
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
@@ -525,6 +620,7 @@ function buildTerrain() {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = new THREE.MeshStandardMaterial({
     vertexColors: true, map: detailTexture(), roughness: 1, metalness: 0,
+    normalMap: rockNormalTexture(), normalScale: new THREE.Vector2(0.55, 0.55),
   });
   const terrain = new THREE.Mesh(geo, mat);
   terrain.receiveShadow = true;
@@ -561,11 +657,17 @@ function buildSky() {
       void main() {
         vec3 dir = normalize(vDir);
         float h = max(dir.y, 0.0);
-        vec3 col = mix(horizonColor, topColor, pow(h, 0.55));
+        // Deep zenith falling off to a bright, slightly warm horizon band.
+        vec3 col = mix(horizonColor, topColor, pow(h, 0.5));
+        col = mix(col, topColor * 0.82, smoothstep(0.45, 1.0, h) * 0.55);
         float sunAmt = max(dot(dir, sunDirection), 0.0);
-        col += sunColor * (pow(sunAmt, 420.0) * 1.4 + pow(sunAmt, 10.0) * 0.22);
+        // Tight solar disc, inner halo and a wide warm forward-scatter glow.
+        col += sunColor * (pow(sunAmt, 1400.0) * 3.2 + pow(sunAmt, 220.0) * 0.9 + pow(sunAmt, 8.0) * 0.16);
+        // Warm tint low around the sun azimuth, like late-afternoon haze.
+        col += vec3(1.0, 0.72, 0.42) * pow(sunAmt, 3.0) * pow(1.0 - h, 3.0) * 0.16;
         col = mix(col, vec3(0.42, 0.47, 0.54), stormFactor * 0.75);
-        col = mix(col, horizonColor, pow(1.0 - h, 6.0) * 0.6);
+        // Atmospheric whitening right at the horizon line.
+        col = mix(col, horizonColor * 1.06, pow(1.0 - h, 7.0) * 0.65);
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -606,13 +708,13 @@ function buildClouds(rng, quality) {
     const posAttr = puffGeo.attributes.position;
     const colors = new Float32Array(posAttr.count * 3);
     const top = new THREE.Color(0xffffff);
-    const belly = new THREE.Color(0x9fb4cc);
+    const belly = new THREE.Color(0xb9cadd);
     const warm = new THREE.Color(0xfff3d9);
     const n = new THREE.Vector3();
     const c = new THREE.Color();
     for (let i = 0; i < posAttr.count; i++) {
       n.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).normalize();
-      c.copy(belly).lerp(top, smoothstep(-0.55, 0.75, n.y));
+      c.copy(belly).lerp(top, smoothstep(-0.75, 0.65, n.y));
       const sunSide = Math.max(0, n.dot(SUN_DIR));
       c.lerp(warm, sunSide * sunSide * 0.45);
       colors[i * 3] = c.r;
@@ -623,17 +725,29 @@ function buildClouds(rng, quality) {
   }
   const puffMat = new THREE.MeshStandardMaterial({
     color: 0xffffff, vertexColors: true, roughness: 1, flatShading: true, transparent: true, opacity: 0.94,
-    emissive: 0x8b98a8, emissiveIntensity: 0.28,
+    emissive: 0xaebfd2, emissiveIntensity: 0.42,
   });
   const puffs = new THREE.InstancedMesh(puffGeo, puffMat, quality.cloudPuffs);
+  // A second, brighter layer riding on top of each puff: sunlit crowns over
+  // the shaded bellies give the near clouds real volume and a soft edge.
+  const topMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 1, flatShading: true, transparent: true, opacity: 0.82,
+    emissive: 0xffffff, emissiveIntensity: 0.42,
+  });
+  const tops = new THREE.InstancedMesh(puffGeo, topMat, quality.cloudPuffs);
   const dummy = new THREE.Object3D();
   const puffData = [];
+  const clusterData = [];
   const puffClusters = 14;
   let placed = 0;
   for (let c = 0; c < puffClusters && placed < quality.cloudPuffs; c++) {
     const cx = range(rng, -3300, 3300);
     const cz = range(rng, -3300, 3300);
     const cy = range(rng, 330, 500);
+    // NOTE: no extra rng draws here — the shared sequence must stay identical
+    // to the checkpoint so downstream placement (storm cells, rings) is
+    // unchanged. The shadow blob borrows the first puff's drift below.
+    let clusterDrift = 2.5;
     const n = Math.min(quality.cloudPuffs - placed, 8 + Math.floor(rng() * 10));
     for (let i = 0; i < n; i++) {
       const px = cx + range(rng, -120, 120);
@@ -645,14 +759,94 @@ function buildClouds(rng, quality) {
       dummy.rotation.y = rng() * Math.PI;
       dummy.updateMatrix();
       puffs.setMatrixAt(placed, dummy.matrix);
-      puffData.push({ x: px, y: py, z: pz, s, ry: dummy.rotation.y, drift: range(rng, 1.5, 3.5) });
+      dummy.position.y = py + s * 0.22;
+      dummy.scale.set(s * 0.72, s * 0.3, s * 0.58);
+      dummy.updateMatrix();
+      tops.setMatrixAt(placed, dummy.matrix);
+      const puffDrift = range(rng, 1.5, 3.5);
+      if (i === 0) clusterDrift = puffDrift;
+      puffData.push({ x: px, y: py, z: pz, s, ry: dummy.rotation.y, drift: puffDrift });
       placed++;
     }
+    clusterData.push({ x: cx, z: cz, drift: clusterDrift, r: 240 + ((c * 137) % 180) });
   }
   puffs.count = placed;
   puffs.instanceMatrix.needsUpdate = true;
+  tops.count = placed;
+  tops.instanceMatrix.needsUpdate = true;
   group.add(puffs);
-  return { group, sprites, puffs, puffData, spriteMat, puffMat };
+  group.add(tops);
+  return { group, sprites, puffs, tops, puffData, clusters: clusterData, spriteMat, puffMat, topMat };
+}
+
+/** Soft dark blobs that drift under the cloud clusters: moving cloud shadows.
+ *  One flat quad per cluster, hugging the terrain at its centre height. */
+function buildCloudShadows(clusters) {
+  const group = new THREE.Group();
+  const tex = canvasTexture(128, 128, (ctx, w, h) => {
+    const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+    g.addColorStop(0, 'rgba(18,30,48,0.85)');
+    g.addColorStop(0.55, 'rgba(18,30,48,0.45)');
+    g.addColorStop(1, 'rgba(18,30,48,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const shadows = clusters.map((cl) => {
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0.34, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -2,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.scale.set(cl.r * 2, 1, cl.r * 1.5);
+    m.position.set(cl.x, heightAt(cl.x, cl.z) + 2.2, cl.z);
+    m.renderOrder = 2;
+    group.add(m);
+    return { mesh: m, cluster: cl };
+  });
+  return { group, shadows };
+}
+
+/** Low scrub bushes: squashed icosahedra scattered over the valley floor. */
+function buildBushes(rng, quality, clearSpots) {
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true });
+  const count = quality.bushes ?? 200;
+  const bushes = new THREE.InstancedMesh(geo, mat, count);
+  bushes.castShadow = true;
+  bushes.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  let placed = 0;
+  let guard = 0;
+  while (placed < count && guard < count * 12) {
+    guard++;
+    const x = range(rng, -3200, 3200);
+    const z = range(rng, -3200, 3200);
+    const h = heightAt(x, z);
+    if (h > 190 || slopeAt(x, z) > 0.45) continue;
+    if (Math.abs(x - pathX(z)) < 20) continue;
+    if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r * 0.95) continue;
+    let blocked = false;
+    for (const spot of clearSpots) {
+      if (Math.hypot(x - spot.x, z - spot.z) < spot.r) { blocked = true; break; }
+    }
+    if (blocked) continue;
+    const s = range(rng, 0.9, 2.6);
+    dummy.position.set(x, h + s * 0.32, z);
+    dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+    dummy.scale.set(s, s * range(rng, 0.5, 0.75), s);
+    dummy.updateMatrix();
+    bushes.setMatrixAt(placed, dummy.matrix);
+    tint.setHSL(0.27 + rng() * 0.05, 0.45 + rng() * 0.2, 0.3 + rng() * 0.14);
+    bushes.setColorAt(placed, tint);
+    placed++;
+  }
+  bushes.count = placed;
+  bushes.instanceMatrix.needsUpdate = true;
+  if (bushes.instanceColor) bushes.instanceColor.needsUpdate = true;
+  return bushes;
 }
 
 /** */
@@ -1913,12 +2107,27 @@ function buildRunway(pad, number) {
   group.add(slab);
   const lightMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
   const lightGeo = new THREE.SphereGeometry(0.55, 8, 6);
+  const haloTex = canvasTexture(64, 64, (ctx) => {
+    const g = ctx.createRadialGradient(32, 32, 1, 32, 32, 31);
+    g.addColorStop(0, 'rgba(255,224,150,0.85)');
+    g.addColorStop(0.35, 'rgba(255,210,110,0.35)');
+    g.addColorStop(1, 'rgba(255,200,90,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+  });
+  const haloMat = new THREE.SpriteMaterial({
+    map: haloTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
   for (let i = 0; i < 12; i++) {
     const z = -WORLD.runwayLength / 2 + (i / 11) * WORLD.runwayLength;
     for (const s of [-1, 1]) {
       const lamp = new THREE.Mesh(lightGeo, lightMat);
       lamp.position.set(s * (WORLD.runwayWidth / 2 + 1.6), 0.55, z);
       group.add(lamp);
+      const halo = new THREE.Sprite(haloMat);
+      halo.position.copy(lamp.position);
+      halo.scale.set(4.2, 4.2, 1);
+      group.add(halo);
     }
   }
   const coneMat = std(0xff7a2e, 0.7);
@@ -2039,6 +2248,7 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   await report(0.34, 'vegetation');
   group.add(buildTrees(rng, quality, clearSpots));
   group.add(buildPines(rng, quality, clearSpots));
+  group.add(buildBushes(createRandom(seed ^ 0xB05E5), quality, clearSpots)); // private rng: keep shared sequence intact
   group.add(buildFlowers(rng, quality, clearSpots));
   group.add(buildRocks(rng));
   await report(0.55, 'buildings');
@@ -2072,6 +2282,8 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   await report(0.9, 'course');
   const clouds = buildClouds(rng, quality);
   group.add(clouds.group);
+  const cloudShadows = buildCloudShadows(clouds.clusters);
+  group.add(cloudShadows.group);
   const stormClouds = buildStormClouds(rng, mapDef);
   group.add(stormClouds.group);
 
@@ -2083,6 +2295,16 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   const ringSet = buildRings(rng, difficulty, mapDef);
   group.add(ringSet.group);
   await report(1, 'done');
+
+  // Keep the image-based lighting at a whisper for scenery materials; the
+  // plane opts into full reflections via userData.envI.
+  group.traverse((obj) => {
+    if (obj.material) {
+      for (const m of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+        if ('envMapIntensity' in m) m.envMapIntensity = m.userData.envI ?? 0.35;
+      }
+    }
+  });
 
   const cloudWhite = new THREE.Color(0xffffff);
   const cloudGrey = new THREE.Color(0x8a97a8);
@@ -2115,6 +2337,7 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
       sky.uniforms.stormFactor.value = f;
       clouds.spriteMat.color.copy(cloudWhite).lerp(cloudGrey, f);
       clouds.puffMat.color.copy(cloudWhite).lerp(cloudGrey, f);
+      clouds.topMat.color.copy(cloudWhite).lerp(cloudGrey, f);
       sunSprite.material.opacity = 1 - f * 0.85;
     },
     /** Animate the living scenery; focus is the plane (sun + dome follow). */
@@ -2134,8 +2357,19 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
         dummy.rotation.set(0, p.ry, 0);
         dummy.updateMatrix();
         clouds.puffs.setMatrixAt(i, dummy.matrix);
+        dummy.position.y = p.y + p.s * 0.22;
+        dummy.scale.set(p.s * 0.72, p.s * 0.3, p.s * 0.58);
+        dummy.updateMatrix();
+        clouds.tops.setMatrixAt(i, dummy.matrix);
       });
       clouds.puffs.instanceMatrix.needsUpdate = true;
+      clouds.tops.instanceMatrix.needsUpdate = true;
+      for (const sh of cloudShadows.shadows) {
+        sh.cluster.x += sh.cluster.drift * dt;
+        if (sh.cluster.x > 3400) sh.cluster.x = -3400;
+        sh.mesh.position.x = sh.cluster.x;
+        sh.mesh.position.y = heightAt(sh.cluster.x, sh.cluster.z) + 2.2;
+      }
 
       for (const rotor of turbines.rotors) rotor.rotation.z += dt * 1.15;
       lighthouse.beamPivot.rotation.y = time * 0.35;

@@ -7,7 +7,8 @@
 // side views for planes) so the menus need no image assets.
 
 import { t } from './settings.js';
-import { MAPS, PLANES } from './config.js';
+import { HULL_PULSE, MAPS, PLANES } from './config.js';
+import { createPlanePreviews } from './preview3d.js';
 
 function el(id) {
   return document.getElementById(id);
@@ -161,6 +162,7 @@ function drawPlanePreview(canvas, def) {
 }
 
 export function createHud() {
+  const previews = createPlanePreviews(); // live 3D plane-card turntables
   const hud = el('hud');
   const altValue = el('alt-value');
   const speedValue = el('speed-value');
@@ -172,13 +174,32 @@ export function createHud() {
   const hullFill = el('hull-fill');
   const hullValue = el('hull-value');
   const horizonBall = el('horizon-ball');
+  const horizonWrap = el('horizon-wrap');
+  const throttleWrap = el('throttle-wrap');
   const throttleFill = el('throttle-fill');
+  const compassEl = el('compass');
+  const compassTop = el('compass-top');
+  const panelRight = el('panel-right');
+  const tapeAlt = el('tape-alt');
+  const tapeSpeed = el('tape-speed');
+  const tapeAltStrip = el('tape-alt-strip');
+  const tapeSpeedStrip = el('tape-speed-strip');
+  const scorePopBox = el('score-pop');
+  const ringFlashEl = el('ring-flash');
+  const hullPulseEl = el('hull-pulse');
   const targetMarker = el('target-marker');
   const targetDist = el('target-dist');
   const warning = el('warning');
   const toast = el('toast');
   const countdown = el('countdown');
   const cockpitFrame = el('cockpit-frame');
+  const coverVideo = el('cover-video');
+  let coverMotion = true;
+  if (coverVideo) {
+    // Video failed to load/decode: hide it so the live 3D scene behind
+    // the cover shows through instead of a black rectangle.
+    coverVideo.addEventListener('error', () => { coverVideo.style.display = 'none'; }, true);
+  }
   const fade = el('fade');
   const bestLine = el('best-line');
   const buffsBox = el('buffs');
@@ -193,6 +214,59 @@ export function createHud() {
   for (const name of SCREENS) screenEls[name] = el(name);
 
   buildCompass(compassStrip);
+
+  // --- vertical tape gauges -------------------------------------------------
+  // Altitude: 0..650 m at 1.4 px/m; speed: 0..380 km/h at 1.15 px per km/h.
+  // Tick for value v sits at strip top = (max - v) * pxPerUnit, so the strip
+  // translates down as the value grows.
+  const ALT_MAX = 650, ALT_PX = 1.4, SPD_MAX = 380, SPD_PX = 1.15;
+  function buildTape(strip, max, pxPer, majorEvery) {
+    let html = '';
+    for (let v = 0; v <= max; v += 10) {
+      const top = (max - v) * pxPer;
+      const major = v % majorEvery === 0;
+      html += `<div class="tape-tick${major ? ' major' : ''}" style="top:${top}px;width:${major ? 16 : 9}px"></div>`;
+      if (major) html += `<div class="tape-tick-label" style="top:${top}px">${v}</div>`;
+    }
+    strip.innerHTML = html;
+    strip.style.height = `${max * pxPer}px`;
+  }
+  buildTape(tapeAltStrip, ALT_MAX, ALT_PX, 50);
+  buildTape(tapeSpeedStrip, SPD_MAX, SPD_PX, 50);
+
+  // Throttle arc ticks: 11 marks across the 240-degree sweep.
+  {
+    const g = el('throttle-ticks');
+    const NS = 'http://www.w3.org/2000/svg';
+    for (let i = 0; i <= 10; i++) {
+      const a = (210 - i * 24) * Math.PI / 180; // 210deg (idle) -> -30deg (full)
+      const r1 = 33, r2 = i % 5 === 0 ? 26 : 29;
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', 60 + r1 * Math.cos(a));
+      line.setAttribute('y1', 60 - r1 * Math.sin(a));
+      line.setAttribute('x2', 60 + r2 * Math.cos(a));
+      line.setAttribute('y2', 60 - r2 * Math.sin(a));
+      line.setAttribute('stroke', 'rgba(180,225,255,0.65)');
+      line.setAttribute('stroke-width', i % 5 === 0 ? '2' : '1.2');
+      g.appendChild(line);
+    }
+  }
+
+  // Low-hull edge pulse shares its period with the audio heartbeat.
+  hullPulseEl.style.animationDuration = `${HULL_PULSE.periodSec}s`;
+
+  // Cached layout sizes (the HUD starts display:none, so measure lazily).
+  let tapeAltH = 0, tapeSpeedH = 0, compassW = 360;
+  function measure() {
+    tapeAltH = tapeAlt.clientHeight || tapeAltH;
+    tapeSpeedH = tapeSpeed.clientHeight || tapeSpeedH;
+    compassW = compassEl.clientWidth || compassW;
+  }
+  window.addEventListener('resize', measure);
+
+  // Smoothed display values: the tapes and score roll instead of snapping.
+  let dispAlt = 0, dispSpeed = 0, dispScore = 0;
+
   let toastTimer = 0;
   let damageTimer = 0;
   let lightningTimer = 0;
@@ -200,6 +274,7 @@ export function createHud() {
   const buffChips = new Map();
   const cardRefs = { map: new Map(), plane: new Map() };
   let onCardSelect = null;
+  let onHover = null; // optional UI hover tick (set via setHoverSound)
 
   function makeCard(kind, key) {
     const card = document.createElement('div');
@@ -228,11 +303,13 @@ export function createHud() {
         card.appendChild(row);
         refs.stats[stat] = { label: row.querySelector('.sname'), fill: row.querySelector('.stat-fill') };
       }
-      drawPlanePreview(canvas, PLANES[key]);
+      // Live 3D turntable when WebGL is available; 2D sketch otherwise.
+      if (!previews.attach(key, canvas, PLANES[key])) drawPlanePreview(canvas, PLANES[key]);
     }
     card.addEventListener('click', () => {
       if (onCardSelect) onCardSelect(kind, key);
     });
+    card.addEventListener('mouseenter', () => { if (onHover) onHover(); });
     return refs;
   }
 
@@ -263,6 +340,27 @@ export function createHud() {
       for (const key of SCREENS) {
         if (screenEls[key]) screenEls[key].style.display = key === name ? 'flex' : 'none';
       }
+      // The 3D card turntables only render while plane select is up.
+      if (name === 'planeselect') previews.start();
+      else previews.stop();
+      // The cover video only plays while the title screen is up.
+      if (coverVideo) {
+        if (name === 'title' && coverMotion) coverVideo.play().catch(() => {});
+        else coverVideo.pause();
+      }
+    },
+
+    /** Low quality tier: drop the cover video, keep the 3D scene. */
+    setCoverMotion(on) {
+      coverMotion = on;
+      if (!coverVideo) return;
+      coverVideo.style.display = on ? '' : 'none';
+      if (!on) coverVideo.pause();
+    },
+
+    /** Register the UI hover-tick callback (buttons + cards). */
+    setHoverSound(fn) {
+      onHover = fn;
     },
 
     /** Build the map and plane select cards; onSelect(kind, key) on click. */
@@ -325,28 +423,40 @@ export function createHud() {
 
     /** Left cluster + horizon + throttle, updated every frame. */
     setInstruments({ alt, speedKmh, headingDeg, pitch, roll, throttle }) {
+      if (!tapeAltH) { measure(); dispAlt = alt; dispSpeed = speedKmh; }
+      dispAlt += (alt - dispAlt) * 0.32;
+      dispSpeed += (speedKmh - dispSpeed) * 0.32;
+      // Readouts stay exact; only the tape motion is smoothed.
       altValue.textContent = `${Math.max(0, Math.round(alt))} m`;
       speedValue.textContent = `${Math.round(speedKmh)} km/h`;
+      tapeAltStrip.style.transform = `translateY(${tapeAltH / 2 - ALT_MAX * ALT_PX + dispAlt * ALT_PX}px)`;
+      tapeSpeedStrip.style.transform = `translateY(${tapeSpeedH / 2 - SPD_MAX * SPD_PX + dispSpeed * SPD_PX}px)`;
       headingValue.textContent = `${String(Math.round(headingDeg) % 360).padStart(3, '0')}°`;
-      compassStrip.style.transform = `translateX(${-(1080 + headingDeg * 3 - 90)}px)`;
-      const pitchPx = Math.max(-34, Math.min(34, pitch * 57.3 * 0.85));
+      compassStrip.style.transform = `translateX(${-(1080 + headingDeg * 3 - compassW / 2)}px)`;
+      const pitchPx = Math.max(-44, Math.min(44, pitch * 57.3 * 1.1));
       horizonBall.style.transform = `rotate(${-roll * 57.3}deg) translateY(${pitchPx}px)`;
-      throttleFill.style.height = `${Math.round(throttle * 100)}%`;
+      throttleFill.style.strokeDashoffset = String(184.3 * (1 - Math.max(0, Math.min(1, throttle))));
     },
 
     /** Right cluster: mission clock, rings threaded, score, hull health. */
     setMission({ timeSec, ringsDone, ringsTotal, score }) {
       timeValue.textContent = formatTime(timeSec);
       ringsValue.textContent = `${ringsDone} / ${ringsTotal}`;
-      scoreValue.textContent = String(Math.round(score));
+      // Roll toward the score, but snap on resets / staged jumps so the
+      // readout never lags a whole run behind.
+      if (Math.abs(score - dispScore) > 300) dispScore = score;
+      dispScore += (score - dispScore) * 0.25;
+      if (Math.abs(score - dispScore) < 0.6) dispScore = score;
+      scoreValue.textContent = String(Math.round(dispScore));
     },
 
     /** Hull bar: green to amber to red as the airframe takes a beating. */
     setHull(frac, value) {
       const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100);
       hullFill.style.width = `${pct}%`;
-      hullFill.style.background = frac > 0.5 ? '#52e07a' : (frac > 0.25 ? '#ffb84d' : '#ff5347');
+      hullFill.style.background = frac > 0.5 ? '#35d3f0' : (frac > HULL_PULSE.threshold ? '#ffb020' : '#ff4b3e');
       hullValue.textContent = String(Math.max(0, Math.round(value)));
+      hullPulseEl.classList.toggle('on', frac < HULL_PULSE.threshold);
     },
 
     /** */
@@ -378,6 +488,21 @@ export function createHud() {
         targetDist.style.display = 'none';
         return;
       }
+      // Never let the marker sit on top of a HUD cluster (SCORE/HULL panel,
+      // compass, tapes): push it out along the shallowest escape axis.
+      for (const zone of [panelRight, compassTop, tapeAlt, tapeSpeed]) {
+        const r = zone.getBoundingClientRect();
+        const pad = 22;
+        if (x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad) {
+          const dl = x - (r.left - pad), dr = (r.right + pad) - x;
+          const dt = y - (r.top - pad), db = (r.bottom + pad) - y;
+          const m = Math.min(dl, dr, dt, db);
+          if (m === dl) x = r.left - pad;
+          else if (m === dr) x = r.right + pad;
+          else if (m === dt) y = r.top - pad;
+          else y = r.bottom + pad;
+        }
+      }
       targetMarker.style.display = 'block';
       targetMarker.style.left = `${x}px`;
       targetMarker.style.top = `${y}px`;
@@ -386,6 +511,22 @@ export function createHud() {
       targetDist.style.left = `${x}px`;
       targetDist.style.top = `${y + 26}px`;
       targetDist.style.display = edge ? 'none' : 'block';
+    },
+
+    /** Floating "+N" beside the score when a ring is threaded. */
+    scorePop(gained) {
+      const item = document.createElement('div');
+      item.className = 'score-pop-item';
+      item.textContent = `+${gained}`;
+      scorePopBox.appendChild(item);
+      window.setTimeout(() => item.remove(), 1150);
+    },
+
+    /** Brief amber edge glow on a ring pass. */
+    ringFlash() {
+      ringFlashEl.classList.remove('go');
+      void ringFlashEl.offsetWidth; // restart the animation
+      ringFlashEl.classList.add('go');
     },
 
     setWarning(text) {
@@ -439,7 +580,12 @@ export function createHud() {
     },
 
     setCockpit(on) {
-      cockpitFrame.style.display = on ? 'block' : 'none';
+      // The 3D cockpit replaced the CSS frame (kept hidden); in first
+      // person the physical panel already carries horizon + throttle,
+      // so hide the 2D duplicates. Side tapes stay — they clear the panel.
+      cockpitFrame.style.display = 'none';
+      horizonWrap.style.display = on ? 'none' : '';
+      throttleWrap.style.display = on ? 'none' : '';
     },
 
     setFade(v) {
@@ -529,6 +675,7 @@ export function createHud() {
       // re-trigger a focused button and restart a flow by accident.
       const wire = (id, fn) => {
         if (fn) el(id).addEventListener('click', (e) => { fn(e); e.currentTarget.blur(); });
+        el(id).addEventListener('mouseenter', () => { if (onHover) onHover(); });
       };
       wire('btn-play', h.onPlay);
       wire('btn-help', h.onHelp);

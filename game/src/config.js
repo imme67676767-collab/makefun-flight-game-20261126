@@ -15,6 +15,7 @@ export const WORLD = {
   ceiling: 820,          // soft altitude cap (the plane eases off above it)
   fogNear: 1400,
   fogFar: 6500,
+  fogDensity: 0.0001,   // FogExp2 density for the clear-day aerial perspective
 };
 
 /** Difficulty presets: ring count, ring radius, par time, base wind, weather odds. */
@@ -162,9 +163,15 @@ export const WEATHER = {
 
 /** Quality tiers: what the world builder and renderer spend. */
 export const QUALITY = {
-  high:   { shadows: true,  shadowMap: 2048, trees: 520, pines: 380, flowers: 420, reeds: 150, butterflies: 16, deer: 5, cattle: 4, sheep: 6, eagles: 2, cloudSprites: 150, cloudPuffs: 220, birds: 20, rainDrops: 2200 },
-  medium: { shadows: true,  shadowMap: 1024, trees: 320, pines: 230, flowers: 260, reeds: 95,  butterflies: 11, deer: 4, cattle: 3, sheep: 5, eagles: 2, cloudSprites: 90,  cloudPuffs: 130, birds: 14, rainDrops: 1400 },
-  low:    { shadows: false, shadowMap: 512,  trees: 160, pines: 110, flowers: 130, reeds: 55,  butterflies: 7,  deer: 3, cattle: 2, sheep: 3, eagles: 1, cloudSprites: 45,  cloudPuffs: 60,  birds: 8,  rainDrops: 800 },
+  high:   { shadows: true,  shadowMap: 2048, post: true,  bloom: true,  ao: true,  trees: 520, pines: 380, bushes: 340, flowers: 420, reeds: 150, butterflies: 16, deer: 5, cattle: 4, sheep: 6, eagles: 2, cloudSprites: 150, cloudPuffs: 220, birds: 20, rainDrops: 2200 },
+  medium: { shadows: true,  shadowMap: 1024, post: true,  bloom: true,  ao: false, trees: 320, pines: 230, bushes: 210, flowers: 260, reeds: 95,  butterflies: 11, deer: 4, cattle: 3, sheep: 5, eagles: 2, cloudSprites: 90,  cloudPuffs: 130, birds: 14, rainDrops: 1400 },
+  low:    { shadows: false, shadowMap: 512,  post: false, bloom: false, ao: false, trees: 160, pines: 110, bushes: 110, flowers: 130, reeds: 55,  butterflies: 7,  deer: 3, cattle: 2, sheep: 3, eagles: 1, cloudSprites: 45,  cloudPuffs: 60,  birds: 8,  rainDrops: 800 },
+};
+
+/** Low-hull heartbeat: one period shared by the HUD edge pulse and the audio thump. */
+export const HULL_PULSE = {
+  threshold: 0.25,   // hull fraction at or below which the pulse runs
+  periodSec: 1.05,   // seconds per heartbeat cycle (visual + audio stay in sync)
 };
 
 export const SCORE = {
@@ -185,7 +192,7 @@ export const SCORE = {
 export const COLORS = {
   skyTop: 0x2b6fd6,
   skyHorizon: 0xcfe9ff,
-  fog: 0xd6ecfa,
+  fog: 0xa9c9e8,
   sun: 0xfff1d6,
   grassLow: 0x4f9c3f,
   grassHigh: 0x7cb557,

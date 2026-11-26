@@ -14,6 +14,7 @@ import { createFx } from './fx.js';
 import { createHud } from './hud.js';
 import { ACTION_CAMERA, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_RESET, createInput } from './input.js';
 import { createPickups } from './pickups.js';
+import { createPostFx } from './postfx.js';
 import { createRandom } from './random.js';
 import {
   buildPlaneModel, createFlightState, forwardOf, headingOf, placeInAir, resetToRunway, stepFlight, syncPlaneModel, wingtipPositions,
@@ -45,19 +46,56 @@ document.getElementById('stage').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(COLORS.skyHorizon);
-scene.fog = new THREE.Fog(COLORS.fog, WORLD.fogNear, WORLD.fogFar);
+scene.fog = new THREE.FogExp2(COLORS.fog, WORLD.fogDensity);
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 12000);
 
-// The sun: one directional light with soft shadows that follow the plane,
-// plus a hemisphere fill so shadowed faces keep their sky colour.
-const sun = new THREE.DirectionalLight(COLORS.sun, 2.6);
+// The sun: one warm directional light with soft shadows that follow the
+// plane, plus a hemisphere fill — cool sky above, blue-grey ground bounce
+// below — so lit faces run warm and shadowed faces run cold.
+const sun = new THREE.DirectionalLight(0xffdfae, 2.9);
 sun.castShadow = true;
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 1.6;
 scene.add(sun);
 scene.add(sun.target);
-const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7a52, 0.85);
+const hemi = new THREE.HemisphereLight(0xa8c8ee, 0x54606e, 0.8);
 scene.add(hemi);
+// Faint warm bounce off the valley floor so undersides do not go dead.
+const bounce = new THREE.DirectionalLight(0xffd9b0, 0.22);
+bounce.position.set(300, 120, 500);
+scene.add(bounce);
+
+// Image-based lighting from a tiny procedural sky: gives the canopy glass
+// and painted metal something real to reflect. Materials opt into a
+// stronger reflection with userData.envI (the plane does); everything
+// else stays at a whisper so the vertex colours keep their say.
+{
+  const envCanvas = document.createElement('canvas');
+  envCanvas.width = 512;
+  envCanvas.height = 256;
+  const ectx = envCanvas.getContext('2d');
+  const grad = ectx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#2b6fd6');
+  grad.addColorStop(0.48, '#cfe9ff');
+  grad.addColorStop(0.55, '#8fae7a');
+  grad.addColorStop(1, '#4c5a3c');
+  ectx.fillStyle = grad;
+  ectx.fillRect(0, 0, 512, 256);
+  const sunGlow = ectx.createRadialGradient(150, 88, 2, 150, 88, 70);
+  sunGlow.addColorStop(0, 'rgba(255,244,200,1)');
+  sunGlow.addColorStop(1, 'rgba(255,220,150,0)');
+  ectx.fillStyle = sunGlow;
+  ectx.fillRect(0, 0, 512, 256);
+  const envTex = new THREE.CanvasTexture(envCanvas);
+  envTex.mapping = THREE.EquirectangularReflectionMapping;
+  envTex.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromEquirectangular(envTex).texture;
+  envTex.dispose();
+  pmrem.dispose();
+}
+
+const post = createPostFx(renderer, scene, camera);
 
 function applyQuality() {
   const q = QUALITY[S().quality] || QUALITY.high;
@@ -74,8 +112,15 @@ function applyQuality() {
     sun.shadow.map.dispose();
     sun.shadow.map = null;
   }
+  post.setQuality(S().quality);
+  hud.setCoverMotion(S().quality !== 'low');
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  post.setSize(Math.max(2, size.x), Math.max(2, size.y));
   scene.traverse((obj) => {
-    if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => { m.needsUpdate = true; });
+    if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => {
+      m.needsUpdate = true;
+      if ('envMapIntensity' in m) m.envMapIntensity = m.userData.envI ?? 0.35;
+    });
   });
 }
 
@@ -612,6 +657,7 @@ function checkRingPass() {
     const tt = prevD / (prevD - nowD);
     _v3.copy(game.prevPos).lerp(game.state.pos, tt);
     const radial = _v3.distanceTo(ring.centre);
+    if (radial > ring.radius && radial <= ring.radius * 2.5) audio.ringMiss();
     if (radial <= ring.radius) {
       const centreBonus = 1 - radial / ring.radius;
       const gained = SCORE.ringBase + Math.round(SCORE.ringCentreBonus * centreBonus);
@@ -624,6 +670,8 @@ function checkRingPass() {
       fx.burst(ring.centre, 0xffc93c, 46, 13, 0.9);
       fx.ripple(ring.centre, ring.quat, ring.radius);
       audio.ringChime(centreBonus);
+      hud.scorePop(gained);
+      hud.ringFlash();
       if (game.currentRing >= game.world.rings.length) hud.toast(t('toast.allRings'));
       else hud.toast(t('toast.ring', { n: game.ringsDone, g: gained }));
     }
@@ -800,7 +848,10 @@ function step(dt, rawInput) {
     }
   }
   const targetFog = inStormCell ? 500 : (wfx.fogFar ?? WORLD.fogFar);
-  scene.fog.far += (targetFog - scene.fog.far) * Math.min(1, dt * 1.5);
+  // Exponential fog: map the old linear "far" distances onto a density so
+  // weather still closes the world in exactly as before.
+  const targetDensity = 0.65 / targetFog;
+  scene.fog.density += (targetDensity - scene.fog.density) * Math.min(1, dt * 1.5);
 
   const windTotal = Math.hypot(wfx.windX, wfx.windZ);
   hud.setWind({
@@ -926,7 +977,16 @@ function step(dt, rawInput) {
     camera.position.y += (Math.random() - 0.5) * shake;
   }
 
-  audio.setFlight(state.throttle, Math.min(1, state.speed / 88), game.mode === 'flying', boost01);
+  audio.setFlight(state.throttle, Math.min(1, state.speed / 88), game.mode === 'flying', boost01, {
+    roll: state.roll,
+    vspeed: state.vel.y,
+    agl: state.pos.y - heightAt(state.pos.x, state.pos.z),
+    airborne: state.airborne,
+    speed: state.speed,
+    stalled: state.stalled,
+    hullFrac: game.maxHp ? game.hp / game.maxHp : 1,
+    inCloud: game.stormNear,
+  });
   syncHud();
 }
 
@@ -973,7 +1033,7 @@ function endCinematic() {
 function setCameraMode(mode) {
   game.cameraMode = mode;
   model.cockpit.visible = mode === 'cockpit';
-  hud.setCockpit(false);
+  hud.setCockpit(mode === 'cockpit');
   camInit = false;
 }
 
@@ -1042,6 +1102,7 @@ hud.buildCards((kind, key) => {
   hud.selectCard(kind, key);
 });
 
+hud.setHoverSound(() => audio.hover());
 hud.onButtons({
   onPlay: () => { audio.init(); audio.click(); game.mode = 'mapselect'; showScreen('mapselect'); },
   onHelp: () => { audio.init(); audio.click(); game.mode = 'help'; showScreen('help'); },
@@ -1125,6 +1186,8 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  post.setSize(Math.max(2, size.x), Math.max(2, size.y));
 });
 
 // Boot: build the world, then either stage a screenshot scene or open the title.
@@ -1177,7 +1240,7 @@ game.reset = reset;
 game.respawnAfterCrash = respawnAfterCrash;
 game.heightAt = heightAt;
 game.placeInAir = placeInAir;
-game.debug = { input, getSettings, renderer, get weather() { return weather; } };
+game.debug = { input, getSettings, renderer, audio, get weather() { return weather; } };
 window.__game = game; // debug/inspection hook (harmless in normal play)
 
 const IDLE_MODES = new Set(['title', 'mapselect', 'planeselect', 'difficulty', 'help', 'best', 'finished']);
@@ -1292,7 +1355,7 @@ function frame(now) {
     }
   }
 
-  renderer.render(scene, camera);
+  post.render();
   framesRendered++;
   if (SHOT && booted && framesRendered >= 3) window.__shotReady = true;
 }

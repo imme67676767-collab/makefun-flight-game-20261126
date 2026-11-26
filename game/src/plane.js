@@ -124,9 +124,42 @@ function fuselageTexture(colors = { body: '#f4f6f8', trim: '#2456c8', accent: '#
       ctx.fillText('SRR-26', 0, 10);
       ctx.restore();
     }
-    // Panel lines running around the body at a few stations.
+    // Panel lines running around the body at a few stations, with a
+    // rivet row dotted along each seam.
     ctx.fillStyle = 'rgba(40,50,66,0.35)';
     for (const v of [0.18, 0.38, 0.55, 0.7, 0.86]) ctx.fillRect(0, v * h, w, 3);
+    ctx.fillStyle = 'rgba(40,50,66,0.3)';
+    for (const v of [0.18, 0.38, 0.55, 0.7, 0.86]) {
+      for (let x = 6; x < w; x += 16) ctx.fillRect(x, v * h + 6, 2.4, 2.4);
+    }
+    // Longitudinal seams with rivets along the spine and belly.
+    for (const u of [0.0, 0.5]) {
+      const x = u * w;
+      ctx.fillStyle = 'rgba(40,50,66,0.22)';
+      ctx.fillRect(x - 1, 0, 2, h);
+      ctx.fillStyle = 'rgba(40,50,66,0.28)';
+      for (let y = 8; y < h; y += 18) ctx.fillRect(x + 4, y, 2.2, 2.2);
+    }
+    // Oil and exhaust streaks streaming back from the cowling (canvas top
+    // is the nose), plus a faint soot wash low on the rear fuselage.
+    for (const u of [0.25, 0.75]) {
+      const x = u * w;
+      for (let i = 0; i < 7; i++) {
+        const sx = x + (i - 3) * 13 + (i % 3) * 4;
+        const len = 60 + (i % 4) * 26;
+        const g = ctx.createLinearGradient(0, h * 0.02, 0, h * 0.02 + len);
+        g.addColorStop(0, 'rgba(30,28,26,0.34)');
+        g.addColorStop(1, 'rgba(30,28,26,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(sx, h * 0.02, 5, len);
+      }
+    }
+    // Light wear: sparse speckle so the paint never reads factory-fresh.
+    for (let i = 0; i < 700; i++) {
+      const a = Math.random() * 0.07;
+      ctx.fillStyle = Math.random() < 0.5 ? `rgba(60,64,70,${a})` : `rgba(255,255,255,${a})`;
+      ctx.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+    }
     // Cowling band near the nose.
     ctx.fillStyle = colors.trim;
     ctx.fillRect(0, h * 0.045, w, 20);
@@ -476,8 +509,9 @@ function buildCockpit() {
   panel.rotation.x = -0.28;
   group.add(panel);
 
-  // Glareshield hood over the panel.
-  const shield = mesh(new THREE.BoxGeometry(1.6, 0.045, 0.36), std(0x232830, 0.9), 0, 0.98, -1.36);
+  // Glareshield hood over the panel: a slim brow hugging the panel top,
+  // narrow and shallow so it never bands across the forward view.
+  const shield = mesh(new THREE.BoxGeometry(1.3, 0.04, 0.14), std(0x232830, 0.9), 0, 0.93, -1.47);
   shield.rotation.x = -0.28;
   group.add(shield);
 
@@ -509,7 +543,7 @@ function buildCockpit() {
 
   // Compass card on the glareshield, rotating under a fixed lubber line.
   const compassBase = new THREE.Group();
-  compassBase.position.set(0, 1.03, -1.40);
+  compassBase.position.set(0, 0.98, -1.48);
   compassBase.rotation.x = -0.5;
   const compassCard = new THREE.Mesh(
     new THREE.CylinderGeometry(0.075, 0.075, 0.024, 24),
@@ -592,12 +626,20 @@ export function buildPlaneModel(planeDef = null) {
   };
   const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
   const plane = new THREE.Group();
-  const white = new THREE.MeshStandardMaterial({
+  // Clearcoat paint: glossy lacquer over the colour coat, full-strength
+  // sky reflections (userData.envI keeps applyQuality from dimming them).
+  const paint = (opts) => {
+    const m = new THREE.MeshPhysicalMaterial({
+      clearcoat: 0.65, clearcoatRoughness: 0.28, roughness: 0.38, metalness: 0.08, ...opts,
+    });
+    m.userData.envI = 1.0;
+    return m;
+  };
+  const white = paint({
     map: fuselageTexture({ body: hex(def.colors.body), trim: hex(def.colors.trim), accent: hex(def.colors.accent) }),
-    roughness: 0.42, metalness: 0.14,
   });
-  const blue = std(def.colors.trim, 0.45, 0.14);
-  const red = std(def.colors.accent, 0.45, 0.14);
+  const blue = paint({ color: def.colors.trim });
+  const red = paint({ color: def.colors.accent });
   const dark = std(0x2b2f36, 0.6, 0.2);
   const wingY = def.wing === 'low' ? -0.58 : def.wing === 'high' ? 1.15 : 0.02;
 
@@ -610,7 +652,21 @@ export function buildPlaneModel(planeDef = null) {
   const rScale = def.wing === 'low' ? 0.9 : def.wing === 'high' ? 1.1 : 1.0;
   const lScale = def.wing === 'low' ? 1.1 : def.wing === 'high' ? 0.94 : 1.0;
   const profile = baseProfile.map(([r, y]) => new THREE.Vector2(r * rScale, y * lScale));
-  const fuselage = mesh(new THREE.LatheGeometry(profile, 28), white);
+  // Elliptical section (taller than wide) with a slightly flattened belly,
+  // like a real light-aircraft fuselage instead of a round tube. Lathe
+  // space: Y is the body axis, X/Z the section; after the -90-degree X
+  // rotation Z becomes height, so Z<0 is the belly.
+  const shapeSection = (geo) => {
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      p.setX(i, p.getX(i) * 0.95);
+      const z = p.getZ(i);
+      p.setZ(i, z * (z < 0 ? 0.98 : 1.05));
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const fuselage = mesh(shapeSection(new THREE.LatheGeometry(profile, 28)), white);
   fuselage.rotation.x = -Math.PI / 2;
   fuselage.position.z = 3.72 * lScale;
   plane.add(fuselage);
@@ -619,7 +675,7 @@ export function buildPlaneModel(planeDef = null) {
   // material, so the engine bay reads as a separate panel from the body.
   const cowlProfile = [[0.84, 6.45], [0.79, 7.05], [0.57, 7.32], [0.31, 7.42]]
     .map(([r, y]) => new THREE.Vector2(r * rScale * 1.015, y * lScale));
-  const cowling = mesh(new THREE.LatheGeometry(cowlProfile, 28), blue);
+  const cowling = mesh(shapeSection(new THREE.LatheGeometry(cowlProfile, 28)), blue);
   cowling.rotation.x = -Math.PI / 2;
   cowling.position.z = 3.72 * lScale;
   plane.add(cowling);
@@ -664,6 +720,7 @@ export function buildPlaneModel(planeDef = null) {
   // Main wing: airfoil loft, root to tip, slight dihedral, accent tips.
   // Sections always run toward +X so the loft winding faces outward.
   const ailerons = [];
+  const flaps = [];
   for (const side of [-1, 1]) {
     const root = { x: side * 0.5, y: wingY, z: -1.45, chord: 1.95, thick: 0.13 };
     const mid = { x: side * 3.0, y: wingY + 0.1, z: -1.35, chord: 1.72, thick: 0.12 };
@@ -680,6 +737,20 @@ export function buildPlaneModel(planeDef = null) {
     pivot.add(surface);
     plane.add(pivot);
     ailerons.push({ pivot, side });
+    // Flap: inboard trailing-edge surface that droops at low speed
+    // (purely visual; driven from airspeed in syncPlaneModel).
+    const flapPivot = new THREE.Group();
+    flapPivot.position.set(side * 1.55, wingY + 0.05, 0.06);
+    const flapSurface = mesh(new THREE.BoxGeometry(1.8, 0.045, 0.4), blue, 0, 0, 0.2);
+    flapPivot.add(flapSurface);
+    plane.add(flapPivot);
+    flaps.push(flapPivot);
+    // Racer only: streamlined tip tanks in the accent colour.
+    if (def.wing === 'low') {
+      const tank = mesh(new THREE.CapsuleGeometry(0.17, 0.85, 4, 10), red, side * 5.5, wingY + 0.2, -0.55);
+      tank.rotation.x = Math.PI / 2;
+      plane.add(tank);
+    }
     // High-wing trainer: lift struts from the lower fuselage to the wing.
     if (def.wing === 'high') {
       const strut = mesh(new THREE.CylinderGeometry(0.045, 0.045, 2.1, 6), blue, side * 1.55, 0.35, -1.3);
@@ -710,8 +781,64 @@ export function buildPlaneModel(planeDef = null) {
   fin.rotation.z = Math.PI / 2; // +X span -> +Y height, thickness -> X
   fin.position.set(0, 0.28, 0);
   plane.add(fin);
+  // Rudder: hinged surface on the fin trailing edge. The flight model has
+  // no yaw input, so it follows the roll stick like a coordinated-turn
+  // rudder (visual only).
+  const rudderPivot = new THREE.Group();
+  rudderPivot.position.set(0, 0.95, 3.42);
+  const rudder = mesh(new THREE.BoxGeometry(0.05, 1.5, 0.5), red, 0, 0, 0.25);
+  rudderPivot.add(rudder);
+  plane.add(rudderPivot);
 
-  // Fixed gear with wheel spats, plus a tailwheel.
+  // Wing-root fairings blend the wing into the fuselage sides.
+  for (const side of [-1, 1]) {
+    const fairing = mesh(new THREE.SphereGeometry(1, 12, 8), white, side * 0.62, wingY, -0.75);
+    fairing.scale.set(0.55, 0.16, 1.05);
+    plane.add(fairing);
+  }
+  // Pitot tube under the left wing; landing light in its leading edge.
+  const pitot = mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 6), dark, -2.2, wingY - 0.12, -1.7);
+  pitot.rotation.x = Math.PI / 2;
+  plane.add(pitot);
+  const landingLight = new THREE.Mesh(
+    new THREE.CircleGeometry(0.14, 12),
+    new THREE.MeshBasicMaterial({ color: 0xfff2c4 }),
+  );
+  landingLight.position.set(-1.6, wingY + 0.03, -1.43);
+  landingLight.rotation.y = Math.PI; // face forward (-Z)
+  plane.add(landingLight);
+  // Aerial mast behind the canopy with a wire back to the fin.
+  const mast = mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.42, 6), dark, 0, 1.02, 0.55);
+  plane.add(mast);
+  const wireGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 1.23, 0.55), new THREE.Vector3(0, 1.7, 2.95),
+  ]);
+  plane.add(new THREE.Line(wireGeo, new THREE.LineBasicMaterial({ color: 0x22262c })));
+
+  // Fixed gear. The high-wing trainer sits on a tricycle gear (nose
+  // wheel, mains just aft of the CG); the others are taildraggers with
+  // wheel spats and a tailwheel. Wheel bottoms share the y=-2.03 line.
+  if (def.wing === 'high') {
+    const noseLeg = mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 8), dark, 0, -1.12, -2.55);
+    plane.add(noseLeg);
+    const noseTire = mesh(new THREE.TorusGeometry(0.2, 0.09, 8, 14), std(0x1c1f24, 0.9), 0, -1.74, -2.55);
+    noseTire.rotation.y = Math.PI / 2;
+    plane.add(noseTire);
+    const noseHub = mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.09, 10), std(0xb9c2cc, 0.35, 0.6), 0, -1.74, -2.55);
+    noseHub.rotation.z = Math.PI / 2;
+    plane.add(noseHub);
+    for (const side of [-1, 1]) {
+      const leg = mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.15, 8), dark, side * 0.8, -1.0, -0.3);
+      leg.rotation.z = side * 0.35;
+      plane.add(leg);
+      const tire = mesh(new THREE.TorusGeometry(0.3, 0.11, 8, 16), std(0x1c1f24, 0.9), side * 1.05, -1.62, -0.3);
+      tire.rotation.y = Math.PI / 2;
+      plane.add(tire);
+      const hub = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.1, 10), std(0xb9c2cc, 0.35, 0.6), side * 1.05, -1.62, -0.3);
+      hub.rotation.z = Math.PI / 2;
+      plane.add(hub);
+    }
+  } else {
   for (const side of [-1, 1]) {
     const leg = mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.25, 8), dark, side * 0.85, -1.05, -1.05);
     leg.rotation.z = side * 0.42;
@@ -732,6 +859,7 @@ export function buildPlaneModel(planeDef = null) {
   const tailWheel = mesh(new THREE.TorusGeometry(0.16, 0.07, 8, 12), std(0x1c1f24, 0.9), 0, -0.62, 3.45);
   tailWheel.rotation.y = Math.PI / 2;
   plane.add(tailWheel);
+  }
 
   // Propeller: three twisted blades, spinner, blur disc.
   const prop = new THREE.Group();
@@ -744,6 +872,9 @@ export function buildPlaneModel(planeDef = null) {
   bladeShape.closePath();
   const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, { depth: 0.045, bevelEnabled: false });
   const bladeMat = std(0x23272e, 0.45, 0.25);
+  bladeMat.transparent = true; // fades out as the blur disc fades in
+  const tipMat = std(0xffd23c, 0.5);
+  tipMat.transparent = true;
   for (let i = 0; i < 3; i++) {
     const holder = new THREE.Group();
     holder.rotation.z = (i / 3) * Math.PI * 2;
@@ -751,7 +882,7 @@ export function buildPlaneModel(planeDef = null) {
     blade.rotation.y = 0.5; // pitch twist
     blade.castShadow = true;
     holder.add(blade);
-    const tipMark = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.06), std(0xffd23c, 0.5));
+    const tipMark = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.06), tipMat);
     tipMark.position.set(0, 1.44, 0.02);
     tipMark.rotation.y = 0.5;
     holder.add(tipMark);
@@ -803,8 +934,13 @@ export function buildPlaneModel(planeDef = null) {
   return {
     group: plane,
     prop,
+    propDisc: disc,
+    bladeMat,
+    tipMat,
     navLights,
     ailerons,
+    flaps,
+    rudderPivot,
     elevatorPivot,
     cockpit: cockpit.group,
     needles: cockpit.needles,
@@ -1127,6 +1263,22 @@ export function syncPlaneModel(model, state, dt, time) {
   const rollIn = state.stickRoll || 0;
   for (const a of model.ailerons) a.pivot.rotation.x = -a.side * rollIn * 0.5;
   model.elevatorPivot.rotation.x = -(state.stickPitch || 0) * 0.45;
+  // Rudder follows the roll stick (coordinated-turn approximation; the
+  // flight model itself has no yaw channel to feed).
+  if (model.rudderPivot) model.rudderPivot.rotation.y = rollIn * 0.4;
+  // Flaps droop as airspeed falls toward the stall (visual only).
+  if (model.flaps) {
+    const flapAmt = clamp((46 - state.speed) / 16, 0, 1);
+    for (const f of model.flaps) f.rotation.x = flapAmt * 0.55;
+  }
+  // Propeller blur crossfade: at low rpm the blades read clearly, at high
+  // rpm they fade into the translucent disc.
+  if (model.propDisc) {
+    const rpm01 = clamp((state.throttle * 46 + state.speed * 0.35) / 52, 0, 1);
+    model.propDisc.material.opacity = 0.04 + rpm01 * 0.15;
+    model.bladeMat.opacity = 1 - rpm01 * 0.72;
+    model.tipMat.opacity = 1 - rpm01 * 0.72;
+  }
   const strobe = (time % 1) < 0.09;
   model.navLights[2].visible = strobe;
 }
