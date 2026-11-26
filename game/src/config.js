@@ -20,9 +20,9 @@ export const WORLD = {
 
 /** Difficulty presets: ring count, ring radius, par time, base wind, weather odds. */
 export const DIFFICULTY = {
-  easy:   { label: 'Easy',   rings: 6,  ringRadius: 17, parSeconds: 300, wind: 0, weatherChance: 0.22 },
-  normal: { label: 'Normal', rings: 10, ringRadius: 13, parSeconds: 260, wind: 0, weatherChance: 0.38 },
-  hard:   { label: 'Hard',   rings: 12, ringRadius: 10, parSeconds: 250, wind: 6, weatherChance: 0.55 },
+  easy:   { label: 'Easy',   rings: 6,  ringRadius: 22, parSeconds: 300, wind: 0, weatherChance: 0.22 },
+  normal: { label: 'Normal', rings: 10, ringRadius: 18, parSeconds: 260, wind: 0, weatherChance: 0.38 },
+  hard:   { label: 'Hard',   rings: 12, ringRadius: 14, parSeconds: 250, wind: 6, weatherChance: 0.55 },
 };
 
 /** */

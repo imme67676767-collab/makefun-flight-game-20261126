@@ -649,13 +649,15 @@ export function createHud() {
       }
       el('set-events').textContent = s.events ? t('set.on') : t('set.off');
       el('set-events').classList.toggle('selected', s.events);
+      el('set-fullscreen').textContent = s.fullscreen ? t('set.on') : t('set.off');
+      el('set-fullscreen').classList.toggle('selected', s.fullscreen);
       for (const btn of document.querySelectorAll('[data-quality]')) {
         btn.classList.toggle('selected', btn.dataset.quality === s.quality);
       }
     },
 
     /** Wire the settings controls. */
-    onSettings({ onSensitivity, onMusicVol, onSfxVol, onLanguage, onEvents, onQuality, onBack }) {
+    onSettings({ onSensitivity, onMusicVol, onSfxVol, onLanguage, onEvents, onQuality, onFullscreen, onBack }) {
       el('set-sensitivity').addEventListener('input', (e) => onSensitivity(Number(e.target.value)));
       el('set-musicvol').addEventListener('input', (e) => onMusicVol(Number(e.target.value)));
       el('set-sfxvol').addEventListener('input', (e) => onSfxVol(Number(e.target.value)));
@@ -663,6 +665,7 @@ export function createHud() {
         btn.addEventListener('click', () => { onLanguage(btn.dataset.lang); btn.blur(); });
       }
       el('set-events').addEventListener('click', (e) => { onEvents(e); e.currentTarget.blur(); });
+      el('set-fullscreen').addEventListener('click', (e) => { if (onFullscreen) onFullscreen(e); e.currentTarget.blur(); });
       for (const btn of document.querySelectorAll('[data-quality]')) {
         btn.addEventListener('click', () => { onQuality(btn.dataset.quality); btn.blur(); });
       }

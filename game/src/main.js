@@ -522,6 +522,17 @@ function setCinematicCamera(frac) {
     a.look[1] + (b.look[1] - a.look[1]) * local,
     a.look[2] + (b.look[2] - a.look[2]) * local,
   );
+  // The straight-line dolly between poses can cut through canyon walls on
+  // the way down to the plane. Keep the camera above the terrain: sample
+  // the ground around the camera (not just under it, so ridges lift it
+  // early) and ride at a clearance that tapers toward the final framing
+  // behind the plane, where the runway pad is flat anyway.
+  const clearance = 14 - 11.5 * Math.max(0, Math.min(1, frac));
+  let ground = heightAt(_cinePos.x, _cinePos.z);
+  ground = Math.max(ground,
+    heightAt(_cinePos.x + 35, _cinePos.z), heightAt(_cinePos.x - 35, _cinePos.z),
+    heightAt(_cinePos.x, _cinePos.z + 35), heightAt(_cinePos.x, _cinePos.z - 35));
+  if (_cinePos.y < ground + clearance) _cinePos.y = ground + clearance;
   camera.position.copy(_cinePos);
   camera.up.set(0, 1, 0);
   camera.lookAt(_cineLook);
@@ -1170,6 +1181,17 @@ hud.onSettings({
     hud.setSettingsValues(S());
     hud.showSettings(true);
   },
+  onFullscreen: () => {
+    audio.click();
+    // The stored setting and the toggle follow the real state via the
+    // fullscreenchange listener below; a rejected request (no gesture,
+    // headless, iframe policy) just leaves everything as it was.
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  },
   onBack: () => { audio.click(); hud.showSettings(false); },
 });
 
@@ -1190,9 +1212,22 @@ window.addEventListener('resize', () => {
   post.setSize(Math.max(2, size.x), Math.max(2, size.y));
 });
 
+// Keep the fullscreen setting honest: entering/leaving fullscreen fires a
+// window resize (handled above, post chain included), and this syncs the
+// stored value + toggle to reality — including Esc exits the game did not
+// initiate. Fullscreen can only be entered from a user gesture, so at boot
+// this just reconciles a stale stored value with the actual state.
+function syncFullscreen() {
+  const on = Boolean(document.fullscreenElement);
+  if (S().fullscreen !== on) setSetting('fullscreen', on);
+  hud.setSettingsValues(S());
+}
+document.addEventListener('fullscreenchange', syncFullscreen);
+
 // Boot: build the world, then either stage a screenshot scene or open the title.
 applyQuality();
 applySettings();
+syncFullscreen();
 let booted = false;
 if (SHOT) {
   game.frozen = true;

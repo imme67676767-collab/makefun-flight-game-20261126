@@ -15,13 +15,14 @@ export const DEFAULT_SETTINGS = {
   lang: 'en',         // 'en' | 'zh'
   events: true,       // random weather on/off
   quality: 'high',    // 'high' | 'medium' | 'low'
+  fullscreen: false,  // mirrors the real fullscreen state (synced live)
 };
 
 const STRINGS = {
   en: {
     'menu.sub': 'Thread every glowing ring down the canyon, then land on the far runway.<br>Centre hits score more. Crashes cost 150.',
     'ctl.throttle': 'throttle up (S / Ctrl down)',
-    'ctl.stick': 'pitch and bank (mouse steers too)',
+    'ctl.stick': 'pitch and bank (or just move the mouse to steer)',
     'ctl.camera': 'chase / first-person cockpit',
     'ctl.pause': 'pause',
     'ctl.restart': 'restart the run',
@@ -63,6 +64,7 @@ const STRINGS = {
     'set.language': 'Language',
     'set.events': 'Random weather events',
     'set.quality': 'Quality',
+    'set.fullscreen': 'Fullscreen',
     'set.on': 'On',
     'set.off': 'Off',
     'quality.high': 'High',
@@ -156,7 +158,7 @@ const STRINGS = {
   zh: {
     'menu.sub': '穿过峡谷里的每一个发光圆环，再降落到远端的跑道上。<br>越接近环心分越高。坠毁扣 150 分。',
     'ctl.throttle': '加油门（S / Ctrl 减油门）',
-    'ctl.stick': '俯仰与横滚（鼠标也能转向）',
+    'ctl.stick': '俯仰与横滚（移动鼠标即可转向）',
     'ctl.camera': '追逐 / 第一人称座舱视角',
     'ctl.pause': '暂停',
     'ctl.restart': '重新开始',
@@ -198,6 +200,7 @@ const STRINGS = {
     'set.language': '语言',
     'set.events': '随机天气事件',
     'set.quality': '画质',
+    'set.fullscreen': '全屏',
     'set.on': '开',
     'set.off': '关',
     'quality.high': '高',
@@ -306,6 +309,7 @@ function sanitize(raw) {
   out.lang = raw.lang === 'zh' || raw.lang === 'en' ? raw.lang : DEFAULT_SETTINGS.lang;
   out.events = typeof raw.events === 'boolean' ? raw.events : DEFAULT_SETTINGS.events;
   out.quality = ['high', 'medium', 'low'].includes(raw.quality) ? raw.quality : DEFAULT_SETTINGS.quality;
+  out.fullscreen = typeof raw.fullscreen === 'boolean' ? raw.fullscreen : DEFAULT_SETTINGS.fullscreen;
   return out;
 }
 
