@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sky Ring Runner — a low-poly flight game</title>
+<title>Sky Ring Runner — thread the canyon rings</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #79a8d8; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f4f8ff; }
@@ -30,6 +30,10 @@
   #compass-strip .tick.major { color: #ffd97a; font-weight: 800; font-size: 13px; }
   #compass::after { content: ""; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: #ffc93c; transform: translateX(-50%); }
 
+  #hull-bar { margin-top: 7px; height: 12px; border-radius: 6px; overflow: hidden; position: relative;
+    background: rgba(4, 12, 24, 0.6); border: 1px solid rgba(150,200,255,0.3); }
+  #hull-fill { position: absolute; left: 0; top: 0; height: 100%; width: 100%; background: #52e07a; transition: width 0.25s; }
+
   #horizon-wrap { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); width: 118px; height: 118px;
     border-radius: 50%; overflow: hidden; border: 2px solid rgba(180, 220, 255, 0.55); background: #79a8d8;
     box-shadow: 0 2px 14px rgba(0,0,0,0.4); }
@@ -47,6 +51,14 @@
   #throttle-fill { position: absolute; left: 0; bottom: 0; width: 100%; height: 0%; background: linear-gradient(#ffd97a, #ff9a3c); }
   #throttle-label { position: absolute; left: calc(50% + 84px); bottom: 8px; width: 20px; text-align: center; font-size: 9px; letter-spacing: 0.1em; color: #cfe6ff; }
 
+  #buffs { position: absolute; left: 50%; bottom: 158px; transform: translateX(-50%); display: flex; gap: 8px; }
+  .buff-chip { display: none; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px;
+    background: rgba(8, 20, 36, 0.66); border: 1px solid rgba(150,200,255,0.4); font-size: 12px; font-weight: 800; letter-spacing: 0.08em; }
+  .buff-boost { color: #ffb84d; border-color: rgba(255, 184, 77, 0.6); }
+  .buff-shield { color: #7fe3f5; border-color: rgba(127, 227, 245, 0.6); }
+  .buff-bar { width: 54px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.18); overflow: hidden; }
+  .buff-fill { display: block; height: 100%; background: currentColor; }
+
   #target-marker { position: absolute; width: 26px; height: 26px; border: 3px solid #ffc93c; border-radius: 4px;
     box-shadow: 0 0 10px rgba(255, 201, 60, 0.8), inset 0 0 6px rgba(255,201,60,0.5); display: none; }
   #target-dist { position: absolute; transform: translateX(-50%); font-size: 14px; font-weight: 800; color: #ffd97a;
@@ -57,6 +69,13 @@
   @keyframes blink { 50% { opacity: 0.25; } }
   #toast { position: absolute; left: 50%; top: 15%; transform: translateX(-50%); font-size: 24px; font-weight: 800;
     color: #ffffff; text-shadow: 0 2px 8px rgba(0,0,0,0.75); opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #weather-banner { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); font-size: 20px; font-weight: 900;
+    letter-spacing: 0.06em; color: #ffd97a; background: rgba(60, 30, 6, 0.62); border: 1px solid rgba(255, 217, 122, 0.55);
+    padding: 7px 20px; border-radius: 999px; display: none; white-space: nowrap; }
+  #wind-indicator { position: absolute; left: 16px; top: 196px; display: none; align-items: center; gap: 8px;
+    background: rgba(8, 20, 36, 0.62); border: 1px solid rgba(150,200,255,0.35); border-radius: 10px; padding: 7px 12px;
+    font-size: 13px; font-weight: 800; color: #cfe6ff; }
+  #wind-arrow { display: inline-block; font-size: 17px; color: #7fe3f5; will-change: transform; }
   #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); font-size: 120px; font-weight: 900;
     color: #ffd97a; text-shadow: 0 4px 22px rgba(0,0,0,0.65); display: none; }
 
@@ -64,6 +83,9 @@
     border-left: 46px solid rgba(16, 20, 26, 0.92); border-right: 46px solid rgba(16, 20, 26, 0.92); border-top: 30px solid rgba(16, 20, 26, 0.92); }
   #cockpit-frame::after { content: ""; position: absolute; left: -46px; right: -46px; bottom: 0; height: 120px;
     background: linear-gradient(rgba(16,20,26,0), rgba(16,20,26,0.95) 55%); }
+  #damage-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.35s;
+    background: radial-gradient(ellipse at center, rgba(255,40,30,0) 46%, rgba(255,40,30,0.5) 100%); }
+  #lightning-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.22s; background: #eef6ff; }
   #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
 
   /* ---------- overlays ---------- */
@@ -89,6 +111,81 @@
   .results-grid .label { color: #9fc6ee; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; align-self: center; }
   .results-grid .value { font-weight: 800; font-variant-numeric: tabular-nums; }
   #res-grade { font-size: 34px; color: #ffd97a; }
+
+  .settings-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 12px 16px; align-items: center;
+    text-align: left; font-size: 14px; color: #d9ecff; margin-bottom: 18px; min-width: 400px; }
+  .settings-grid .slabel { font-weight: 700; white-space: nowrap; }
+  .settings-grid .sval { font-variant-numeric: tabular-nums; color: #ffd97a; font-weight: 800; min-width: 44px; text-align: right; }
+  .settings-grid input[type="range"] { width: 100%; accent-color: #ffc93c; }
+  .settings-grid .btn-group { display: flex; gap: 6px; }
+  .settings-grid .btn-group button { padding: 6px 12px; font-size: 13px; }
+
+  /* ---------- buttons & cards: motion ---------- */
+  button { transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease; position: relative; overflow: hidden; }
+  button:hover { transform: scale(1.05); box-shadow: 0 0 14px rgba(120, 190, 255, 0.45), 0 4px 14px rgba(0,0,0,0.35); }
+  button:active { transform: scale(0.95); }
+  button.selected { box-shadow: 0 0 16px rgba(255, 201, 60, 0.65); }
+  .btn-primary { background: linear-gradient(120deg, #ffc93c, #ff9a3c, #ffc93c); background-size: 200% 100%;
+    animation: sheen 2.6s linear infinite; color: #23180a; border-color: #ffe1a0; font-size: 20px; padding: 12px 36px; }
+  .btn-primary:hover { box-shadow: 0 0 22px rgba(255, 180, 60, 0.75), 0 6px 18px rgba(0,0,0,0.4); }
+  @keyframes sheen { 0% { background-position: 0% 0; } 100% { background-position: 200% 0; } }
+  .btn-stack { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 6px; }
+  .btn-stack button { min-width: 240px; font-size: 17px; padding: 11px 22px; }
+
+  .title-card { background: rgba(7, 18, 33, 0.55); }
+  .title-card h1 { font-size: 58px; }
+  .title-card .sub { font-size: 17px; }
+
+  .card-row { display: flex; gap: 16px; justify-content: center; margin: 8px 0 16px; flex-wrap: wrap; }
+  .select-card { width: 264px; background: rgba(12, 30, 54, 0.88); border: 1px solid rgba(150,200,255,0.35);
+    border-radius: 14px; padding: 12px; cursor: pointer; text-align: left;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+  .select-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.5); border-color: rgba(180,220,255,0.7); }
+  .select-card.selected { border-color: #ffc93c; box-shadow: 0 0 0 2px #ffc93c, 0 0 26px rgba(255,201,60,0.55), 0 14px 30px rgba(0,0,0,0.5); }
+  .select-card canvas { width: 100%; height: 118px; border-radius: 9px; display: block; background: #79a8d8; }
+  .select-card h3 { margin: 10px 0 4px; font-size: 19px; color: #ffd97a; }
+  .select-card p { margin: 0 0 8px; font-size: 13px; color: #cfe6ff; line-height: 1.45; min-height: 38px; }
+  .select-card .stars { color: #ffc93c; font-size: 15px; letter-spacing: 2px; }
+  .select-card .stars .dim { color: rgba(255,201,60,0.25); }
+  .stat-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #9fc6ee; margin-top: 4px; }
+  .stat-row .sname { width: 52px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .stat-track { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.14); overflow: hidden; }
+  .stat-fill { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #37c8e0, #52e07a); transition: width 0.4s ease; }
+
+  #load-bar { width: 420px; max-width: 80vw; height: 16px; border-radius: 8px; margin: 14px auto 10px;
+    background: rgba(255,255,255,0.14); border: 1px solid rgba(150,200,255,0.4); overflow: hidden; }
+  #load-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #37c8e0, #ffc93c); transition: width 0.35s ease; }
+  #load-stage { font-size: 15px; color: #ffd97a; font-weight: 700; min-height: 22px; }
+  #load-tip { font-size: 13px; color: #9fc6ee; min-height: 20px; margin-top: 6px; }
+
+  #countdown.pop { animation: countpop 0.9s ease both; }
+  @keyframes countpop { 0% { transform: translate(-50%,-50%) scale(1.7); opacity: 0; } 25% { opacity: 1; } 100% { transform: translate(-50%,-50%) scale(1); opacity: 1; } }
+
+  #res-grade-badge { width: 96px; height: 96px; margin: 4px auto 12px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-size: 54px; font-weight: 900; color: #23180a;
+    background: radial-gradient(circle at 35% 30%, #ffe9a8, #ffc93c 60%, #d99a1f); border: 3px solid #ffe1a0;
+    box-shadow: 0 0 30px rgba(255,201,60,0.6); }
+  #res-grade-badge.pop { animation: badgepop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+  @keyframes badgepop { 0% { transform: scale(0) rotate(-14deg); } 100% { transform: scale(1) rotate(0); } }
+  #res-grade-badge.grade-A { background: radial-gradient(circle at 35% 30%, #d9f4ff, #7fd0f0 60%, #3f9fd0); border-color: #bfeaff; box-shadow: 0 0 26px rgba(127,208,240,0.55); }
+  #res-grade-badge.grade-B { background: radial-gradient(circle at 35% 30%, #ffe4c4, #f0a35e 60%, #c97a35); border-color: #ffd9ae; box-shadow: 0 0 22px rgba(240,163,94,0.5); }
+  #res-grade-badge.grade-C { background: radial-gradient(circle at 35% 30%, #e8e8e8, #b9c2cc 60%, #8a97a8); border-color: #dfe6ee; box-shadow: 0 0 18px rgba(185,194,204,0.45); }
+  .breakdown { display: grid; grid-template-columns: auto auto; gap: 4px 22px; justify-content: center; text-align: left; font-size: 16px; margin: 6px 0 10px; }
+  .breakdown .label { color: #9fc6ee; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; align-self: center; }
+  .breakdown .value { font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+  .breakdown .total-row { border-top: 1px solid rgba(150,200,255,0.35); padding-top: 6px; margin-top: 2px; }
+  .breakdown .total-row .value { font-size: 22px; color: #ffd97a; }
+
+  #best-list { min-width: 440px; text-align: left; font-size: 14px; color: #d9ecff; margin-bottom: 14px; }
+  #best-list table { width: 100%; border-collapse: collapse; }
+  #best-list th { color: #9fc6ee; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 6px; text-align: left; }
+  #best-list td { padding: 4px 6px; border-top: 1px solid rgba(150,200,255,0.18); font-variant-numeric: tabular-nums; }
+  #best-list td.grade { font-weight: 900; color: #ffd97a; }
+
+  #skip-hint { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); font-size: 13px;
+    color: rgba(230,244,255,0.85); text-shadow: 0 1px 4px rgba(0,0,0,0.8); display: none; pointer-events: none; }
+  .help-notes { text-align: left; font-size: 13.5px; color: #cfe6ff; line-height: 1.55; margin: 0 auto 14px; max-width: 470px; }
+  .help-notes p { margin: 5px 0; }
 </style>
 </head>
 <body>
@@ -97,78 +194,199 @@
 
 <div id="hud">
   <div class="panel" id="panel-left">
-    <div class="row"><span class="label">Altitude</span><span class="value" id="alt-value">0 m</span></div>
-    <div class="row"><span class="label">Speed</span><span class="value" id="speed-value">0 km/h</span></div>
-    <div class="row"><span class="label">Heading</span><span class="value" id="heading-value">000°</span></div>
+    <div class="row"><span class="label" data-i18n="hud.altitude">Altitude</span><span class="value" id="alt-value">0 m</span></div>
+    <div class="row"><span class="label" data-i18n="hud.speed">Speed</span><span class="value" id="speed-value">0 km/h</span></div>
+    <div class="row"><span class="label" data-i18n="hud.heading">Heading</span><span class="value" id="heading-value">000°</span></div>
     <div id="compass"><div id="compass-strip"></div></div>
   </div>
   <div class="panel" id="panel-right">
-    <div class="row"><span class="label">Time</span><span class="value" id="time-value">0:00.0</span></div>
-    <div class="row"><span class="label">Rings</span><span class="value" id="rings-value">0 / 10</span></div>
-    <div class="row"><span class="label">Score</span><span class="value" id="score-value">0</span></div>
+    <div class="row"><span class="label" data-i18n="hud.time">Time</span><span class="value" id="time-value">0:00.0</span></div>
+    <div class="row"><span class="label" data-i18n="hud.rings">Rings</span><span class="value" id="rings-value">0 / 10</span></div>
+    <div class="row"><span class="label" data-i18n="hud.score">Score</span><span class="value" id="score-value">0</span></div>
+    <div class="row"><span class="label" data-i18n="hud.hull">Hull</span><span class="value" id="hull-value">100</span></div>
+    <div id="hull-bar"><div id="hull-fill"></div></div>
   </div>
+  <div id="wind-indicator"><span id="wind-arrow">&#10148;</span><span id="wind-value">0 km/h</span></div>
   <div id="horizon-wrap">
     <div id="horizon-ball"><div class="sky"></div><div class="gnd"></div><div class="line"></div></div>
     <div id="horizon-fixed"></div><div id="horizon-dot"></div>
   </div>
   <div id="throttle-wrap"><div id="throttle-fill"></div></div>
-  <div id="throttle-label">THR</div>
+  <div id="throttle-label" data-i18n="hud.thr">THR</div>
+  <div id="buffs"></div>
   <div id="target-marker"></div>
   <div id="target-dist"></div>
+  <div id="weather-banner"></div>
   <div id="warning"></div>
   <div id="toast"></div>
   <div id="countdown"></div>
 </div>
 
 <div id="cockpit-frame"></div>
+<div id="damage-flash"></div>
+<div id="lightning-flash"></div>
 <div id="fade"></div>
 
-<div class="overlay" id="menu">
-  <div class="card">
+<div class="overlay" id="title">
+  <div class="card title-card">
     <h1>SKY RING RUNNER</h1>
-    <p class="sub">Thread every glowing ring down the canyon, then land on the far runway.<br>Centre hits score more. Crashes cost 150.</p>
-    <div class="controls">
-      <b>W / Shift</b><span>throttle up (S / Ctrl down)</span>
-      <b>Arrow keys</b><span>pitch and bank (mouse steers too)</span>
-      <b>C</b><span>chase / cockpit camera</span>
-      <b>P or Esc</b><span>pause</span>
-      <b>R</b><span>restart the run</span>
-      <b>M</b><span>mute</span>
+    <p class="sub" data-i18n="title.sub">Thread the canyon rings. Land it clean.</p>
+    <div class="btn-stack">
+      <button id="btn-play" class="btn-primary" data-i18n="btn.play">Start game</button>
+      <button id="btn-help" data-i18n="btn.help">How to fly</button>
+      <button id="btn-best" data-i18n="btn.best">Best flights</button>
+      <button id="btn-settings" data-i18n="btn.settings">Settings</button>
     </div>
-    <div class="diff-row">
-      <button data-diff="easy">Easy · 6 rings</button>
-      <button data-diff="normal" class="selected">Normal · 10 rings</button>
-      <button data-diff="hard">Hard · 12 rings + wind</button>
-    </div>
-    <button id="btn-start">Take off</button>
-    <div class="small-row"><button id="btn-music">Music: on</button></div>
     <div id="best-line">No flights yet — the canyon is waiting.</div>
+  </div>
+</div>
+
+<div class="overlay" id="mapselect">
+  <div class="card" style="max-width: 920px;">
+    <h2 data-i18n="map.title">Choose your map</h2>
+    <div class="card-row" id="map-cards"></div>
+    <div class="small-row">
+      <button id="btn-map-back" data-i18n="btn.back">Back</button>
+      <button id="btn-map-next" class="btn-primary" data-i18n="btn.next">Next</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="planeselect">
+  <div class="card" style="max-width: 920px;">
+    <h2 data-i18n="plane.title">Choose your plane</h2>
+    <div class="card-row" id="plane-cards"></div>
+    <div class="small-row">
+      <button id="btn-plane-back" data-i18n="btn.back">Back</button>
+      <button id="btn-plane-next" class="btn-primary" data-i18n="btn.next">Next</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="difficulty">
+  <div class="card">
+    <h2 data-i18n="diff.title">Choose difficulty</h2>
+    <div class="diff-row">
+      <button data-diff="easy" data-i18n="diff.easy">Easy · 6 rings</button>
+      <button data-diff="normal" class="selected" data-i18n="diff.normal">Normal · 10 rings</button>
+      <button data-diff="hard" data-i18n="diff.hard">Hard · 12 rings + wind</button>
+    </div>
+    <button id="btn-start" class="btn-primary" data-i18n="btn.start">Take off</button>
+    <div class="small-row">
+      <button id="btn-diff-back" data-i18n="btn.back">Back</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="loading">
+  <div class="card">
+    <h2 data-i18n="loading.title">Preparing the course…</h2>
+    <div id="load-bar"><div id="load-fill"></div></div>
+    <div id="load-stage"></div>
+    <div id="load-tip"></div>
+  </div>
+</div>
+
+<div class="overlay" id="help">
+  <div class="card">
+    <h2 data-i18n="help.title">How to fly</h2>
+    <div class="controls">
+      <b>W / Shift</b><span data-i18n="ctl.throttle">throttle up (S / Ctrl down)</span>
+      <b>Arrow keys</b><span data-i18n="ctl.stick">pitch and bank (mouse steers too)</span>
+      <b>C</b><span data-i18n="ctl.camera">chase / first-person cockpit</span>
+      <b>P or Esc</b><span data-i18n="ctl.pause">pause</span>
+      <b>R</b><span data-i18n="ctl.restart">restart the run</span>
+      <b>M</b><span data-i18n="ctl.mute">mute</span>
+    </div>
+    <div class="help-notes">
+      <p data-i18n="help.pickups">Fly through pickups: orange = boost, cyan = shield, green = repair.</p>
+      <p data-i18n="help.weather">Weather rolls in: gusts push you sideways, storms shake the stick, tornadoes pull. Watch the banner.</p>
+      <p data-i18n="help.traffic">Other planes share the sky — keep clear, collisions hurt.</p>
+      <p data-i18n="help.storm">Dark storm cells: inside is turbulence and lightning. Detour or punch through.</p>
+      <p data-i18n="help.scoring">Score: ring points + finish bonus + time bonus + hull bonus − crash penalties.</p>
+    </div>
+    <button id="btn-help-back" data-i18n="btn.back">Back</button>
+  </div>
+</div>
+
+<div class="overlay" id="best">
+  <div class="card">
+    <h2 data-i18n="best.title">Best flights</h2>
+    <div id="best-list"></div>
+    <button id="btn-best-back" data-i18n="btn.back">Back</button>
   </div>
 </div>
 
 <div class="overlay" id="results">
   <div class="card">
     <h2 id="res-title">Course complete!</h2>
-    <div class="results-grid">
-      <span class="label">Time</span><span class="value" id="res-time">0:00.0</span>
-      <span class="label">Rings</span><span class="value" id="res-rings">0 / 10</span>
-      <span class="label">Crashes</span><span class="value" id="res-crashes">0</span>
-      <span class="label">Score</span><span class="value" id="res-score">0</span>
-      <span class="label">Grade</span><span class="value" id="res-grade">C</span>
+    <div id="res-grade-badge">C</div>
+    <div class="breakdown">
+      <span class="label" data-i18n="res.ringScore">Ring points</span><span class="value" id="res-ringscore">0</span>
+      <span class="label" data-i18n="res.finish">Finish bonus</span><span class="value" id="res-finish">0</span>
+      <span class="label" data-i18n="res.timeBonus">Time bonus</span><span class="value" id="res-timebonus">0</span>
+      <span class="label" data-i18n="res.hpBonus">Hull bonus</span><span class="value" id="res-hpbonus">0</span>
+      <span class="label" data-i18n="res.crashPenalty">Crash penalties</span><span class="value" id="res-crashpen">0</span>
+      <span class="label total-row" data-i18n="res.total">Total</span><span class="value total-row" id="res-total">0</span>
+      <span class="label" data-i18n="res.time">Time</span><span class="value" id="res-time">0:00.0</span>
+      <span class="label" data-i18n="res.rings">Rings</span><span class="value" id="res-rings">0 / 10</span>
+      <span class="label" data-i18n="res.crashes">Crashes</span><span class="value" id="res-crashes">0</span>
     </div>
-    <button id="btn-again">Fly again</button>
+    <div class="small-row">
+      <button id="btn-again" class="btn-primary" data-i18n="btn.again">Fly again</button>
+      <button id="btn-results-title" data-i18n="btn.title">Back to title</button>
+    </div>
   </div>
 </div>
 
 <div class="overlay" id="pause">
   <div class="card">
-    <h2>Paused</h2>
+    <h2 data-i18n="pause.title">Paused</h2>
     <div class="small-row">
-      <button id="btn-resume">Resume</button>
-      <button id="btn-restart">Restart run</button>
+      <button id="btn-resume" data-i18n="btn.resume">Resume</button>
+      <button id="btn-restart" data-i18n="btn.restart">Restart run</button>
+      <button id="btn-music">Music: on</button>
+      <button id="btn-settings-pause" data-i18n="btn.settings">Settings</button>
+      <button id="btn-menu" data-i18n="btn.menu">Main menu</button>
     </div>
   </div>
 </div>
+
+<div class="overlay" id="settings">
+  <div class="card">
+    <h2 data-i18n="set.title">Settings</h2>
+    <div class="settings-grid">
+      <span class="slabel" data-i18n="set.sensitivity">Mouse sensitivity</span>
+      <input type="range" id="set-sensitivity" min="0.3" max="2" step="0.1" value="1">
+      <span class="sval" id="set-sensitivity-val">1.0</span>
+      <span class="slabel" data-i18n="set.musicVol">Music volume</span>
+      <input type="range" id="set-musicvol" min="0" max="1" step="0.05" value="0.75">
+      <span class="sval" id="set-musicvol-val">75%</span>
+      <span class="slabel" data-i18n="set.sfxVol">Sound effects volume</span>
+      <input type="range" id="set-sfxvol" min="0" max="1" step="0.05" value="0.9">
+      <span class="sval" id="set-sfxvol-val">90%</span>
+      <span class="slabel" data-i18n="set.language">Language</span>
+      <span class="btn-group">
+        <button data-lang="en">English</button>
+        <button data-lang="zh">中文</button>
+      </span>
+      <span class="sval"></span>
+      <span class="slabel" data-i18n="set.events">Random weather events</span>
+      <span class="btn-group"><button id="set-events">On</button></span>
+      <span class="sval"></span>
+      <span class="slabel" data-i18n="set.quality">Quality</span>
+      <span class="btn-group">
+        <button data-quality="high" data-i18n="quality.high">High</button>
+        <button data-quality="medium" data-i18n="quality.medium">Medium</button>
+        <button data-quality="low" data-i18n="quality.low">Low</button>
+      </span>
+      <span class="sval"></span>
+    </div>
+    <button id="btn-settings-back" data-i18n="btn.back">Back</button>
+  </div>
+</div>
+
+<div id="skip-hint" data-i18n="hint.skip">Click or press any key to skip</div>
 
 <script src="./vendor/three.min.js"></script>
 <script type="module" src="./src/main.js"></script>
