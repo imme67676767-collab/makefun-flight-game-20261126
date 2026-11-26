@@ -501,9 +501,16 @@ function buildThrottleHand() {
 function buildCockpit() {
   const group = new THREE.Group();
 
+  const panelMat = new THREE.MeshStandardMaterial({
+    map: panelTexture(), roughness: 0.85,
+    // A whisper of self-light + sky reflection so the panel never reads
+    // dead black in shadow; the gauge faces stay legible either way.
+    emissive: 0x11151c, emissiveIntensity: 1,
+  });
+  panelMat.userData.envI = 0.6;
   const panel = new THREE.Mesh(
     new THREE.BoxGeometry(1.55, 0.58, 0.09),
-    new THREE.MeshStandardMaterial({ map: panelTexture(), roughness: 0.85 }),
+    panelMat,
   );
   panel.position.set(0, 0.64, -1.48);
   panel.rotation.x = -0.28;
@@ -511,7 +518,12 @@ function buildCockpit() {
 
   // Glareshield hood over the panel: a slim brow hugging the panel top,
   // narrow and shallow so it never bands across the forward view.
-  const shield = mesh(new THREE.BoxGeometry(1.3, 0.04, 0.14), std(0x232830, 0.9), 0, 0.93, -1.47);
+  const shield = mesh(new THREE.BoxGeometry(1.3, 0.04, 0.14), std(0x2e3540, 0.9), 0, 0.93, -1.47);
+  // Soft cockpit fill: a short-range warm light so the panel, stick and
+  // hands keep modelling when the sun is behind the plane.
+  const fill = new THREE.PointLight(0xffe6c0, 0.55, 3.4, 1.6);
+  fill.position.set(0, 1.05, -1.05);
+  group.add(fill);
   shield.rotation.x = -0.28;
   group.add(shield);
 
@@ -588,7 +600,7 @@ function buildCockpit() {
 
   // Throttle console on the right, lever moving with the throttle, and a
   // simpler right hand resting on the knob.
-  const console_ = mesh(new THREE.BoxGeometry(0.17, 0.32, 0.55), std(0x232830, 0.85), 0.56, 0.42, -1.02);
+  const console_ = mesh(new THREE.BoxGeometry(0.17, 0.32, 0.55), std(0x2e3540, 0.85), 0.56, 0.42, -1.02);
   group.add(console_);
   const throttlePivot = new THREE.Group();
   throttlePivot.position.set(0.56, 0.60, -1.02);
@@ -695,11 +707,13 @@ export function buildPlaneModel(planeDef = null) {
   const seat = mesh(new THREE.BoxGeometry(0.55, 0.7, 0.5), std(0x3a3f47, 0.9), 0, 0.28, -0.35);
   const headrest = mesh(new THREE.BoxGeometry(0.34, 0.3, 0.16), std(0x2b2f36, 0.9), 0, 0.72, -0.08);
   plane.add(seat, headrest);
+  const canopyMat = new THREE.MeshStandardMaterial({
+    color: 0x3a7bd5, transparent: true, opacity: 0.55, roughness: 0.08, metalness: 0.25, side: THREE.FrontSide,
+  });
+  canopyMat.userData.envI = 1.4; // glass catches the sky hardest
   const canopy = new THREE.Mesh(
     new THREE.SphereGeometry(0.72, 24, 16),
-    new THREE.MeshStandardMaterial({
-      color: 0x3a7bd5, transparent: true, opacity: 0.55, roughness: 0.08, metalness: 0.25, side: THREE.FrontSide,
-    }),
+    canopyMat,
   );
   if (def.wing === 'low') {
     canopy.scale.set(0.74, 0.56, 1.42);
@@ -807,6 +821,36 @@ export function buildPlaneModel(planeDef = null) {
   landingLight.position.set(-1.6, wingY + 0.03, -1.43);
   landingLight.rotation.y = Math.PI; // face forward (-Z)
   plane.add(landingLight);
+  // Wing surface detail: spar + hinge panel lines (thin half-sunk strips
+  // following the dihedral), fuel caps, and per-type extras — walkway
+  // strips on the tourers, stall fences on the racer.
+  const lineMat = std(0x3a4048, 0.8);
+  for (const side of [-1, 1]) {
+    const segs = [
+      { cx: side * 1.75, len: 2.5, y: wingY + 0.16, slope: 0.028 },
+      { cx: side * 4.22, len: 2.45, y: wingY + 0.24, slope: 0.037 },
+    ];
+    for (const seg of segs) {
+      for (const [lz, dy] of [[-0.84, 0], [-0.13, -0.035]]) {
+        const line = mesh(new THREE.BoxGeometry(seg.len, 0.014, 0.035), lineMat, seg.cx, seg.y + dy, lz);
+        line.rotation.z = side * seg.slope;
+        plane.add(line);
+      }
+    }
+    const cap = mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.025, 10), dark, side * 1.5, wingY + 0.16, -0.75);
+    plane.add(cap);
+    if (def.wing === 'low') {
+      const fence = mesh(new THREE.BoxGeometry(0.02, 0.17, 1.1), red, side * 3.1, wingY + 0.27, -0.75);
+      plane.add(fence);
+    } else {
+      const walk = mesh(new THREE.BoxGeometry(1.6, 0.012, 0.5), lineMat, side * 1.15, wingY + 0.145, -0.35);
+      plane.add(walk);
+    }
+  }
+  // Belly blade antenna under the rear fuselage.
+  const bellyAnt = mesh(new THREE.BoxGeometry(0.03, 0.2, 0.28), dark, 0, -0.44, 1.6);
+  bellyAnt.rotation.x = 0.3;
+  plane.add(bellyAnt);
   // Aerial mast behind the canopy with a wire back to the fin.
   const mast = mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.42, 6), dark, 0, 1.02, 0.55);
   plane.add(mast);
@@ -831,6 +875,9 @@ export function buildPlaneModel(planeDef = null) {
       const leg = mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.15, 8), dark, side * 0.8, -1.0, -0.3);
       leg.rotation.z = side * 0.35;
       plane.add(leg);
+      const fairing = mesh(new THREE.BoxGeometry(0.09, 0.95, 0.3), blue, side * 0.8, -1.0, -0.3);
+      fairing.rotation.z = side * 0.35;
+      plane.add(fairing);
       const tire = mesh(new THREE.TorusGeometry(0.3, 0.11, 8, 16), std(0x1c1f24, 0.9), side * 1.05, -1.62, -0.3);
       tire.rotation.y = Math.PI / 2;
       plane.add(tire);
@@ -843,6 +890,9 @@ export function buildPlaneModel(planeDef = null) {
     const leg = mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.25, 8), dark, side * 0.85, -1.05, -1.05);
     leg.rotation.z = side * 0.42;
     plane.add(leg);
+    const fairing = mesh(new THREE.BoxGeometry(0.1, 1.05, 0.34), blue, side * 0.85, -1.05, -1.05);
+    fairing.rotation.z = side * 0.42;
+    plane.add(fairing);
     const spat = mesh(new THREE.SphereGeometry(0.42, 12, 8), blue, side * 1.18, -1.52, -1.02);
     spat.scale.set(0.42, 0.95, 1.5);
     plane.add(spat);
@@ -915,6 +965,14 @@ export function buildPlaneModel(planeDef = null) {
     plane.add(bulb);
     navLights.push(bulb);
   }
+  // Anti-collision beacon on the fin top, blinking out of phase with the
+  // tail strobe (driven in syncPlaneModel).
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.085, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xff2a1e }),
+  );
+  beacon.position.set(0, 1.82, 2.92);
+  plane.add(beacon);
 
   const cockpit = buildCockpit();
   plane.add(cockpit.group);
@@ -938,6 +996,7 @@ export function buildPlaneModel(planeDef = null) {
     bladeMat,
     tipMat,
     navLights,
+    beacon,
     ailerons,
     flaps,
     rudderPivot,
@@ -1281,6 +1340,7 @@ export function syncPlaneModel(model, state, dt, time) {
   }
   const strobe = (time % 1) < 0.09;
   model.navLights[2].visible = strobe;
+  if (model.beacon) model.beacon.visible = (time % 1.4) < 0.14;
 }
 
 /** World positions of the two wingtips, for the vapour trails. */

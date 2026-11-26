@@ -163,9 +163,9 @@ export const WEATHER = {
 
 /** Quality tiers: what the world builder and renderer spend. */
 export const QUALITY = {
-  high:   { shadows: true,  shadowMap: 2048, post: true,  bloom: true,  ao: true,  trees: 520, pines: 380, bushes: 340, flowers: 420, reeds: 150, butterflies: 16, deer: 5, cattle: 4, sheep: 6, eagles: 2, cloudSprites: 150, cloudPuffs: 220, birds: 20, rainDrops: 2200 },
-  medium: { shadows: true,  shadowMap: 1024, post: true,  bloom: true,  ao: false, trees: 320, pines: 230, bushes: 210, flowers: 260, reeds: 95,  butterflies: 11, deer: 4, cattle: 3, sheep: 5, eagles: 2, cloudSprites: 90,  cloudPuffs: 130, birds: 14, rainDrops: 1400 },
-  low:    { shadows: false, shadowMap: 512,  post: false, bloom: false, ao: false, trees: 160, pines: 110, bushes: 110, flowers: 130, reeds: 55,  butterflies: 7,  deer: 3, cattle: 2, sheep: 3, eagles: 1, cloudSprites: 45,  cloudPuffs: 60,  birds: 8,  rainDrops: 800 },
+  high:   { shadows: true,  shadowMap: 4096, shadowRange: 190, post: true,  bloom: true,  ao: true,  waterEnv: 1.3, glitter: true,  trees: 520, pines: 380, bushes: 340, flowers: 420, reeds: 150, butterflies: 16, deer: 5, cattle: 4, sheep: 6, eagles: 2, cloudSprites: 150, cloudPuffs: 220, birds: 20, rainDrops: 2200 },
+  medium: { shadows: true,  shadowMap: 2048, shadowRange: 240, post: true,  bloom: true,  ao: false, waterEnv: 1.0, glitter: true,  trees: 320, pines: 230, bushes: 210, flowers: 260, reeds: 95,  butterflies: 11, deer: 4, cattle: 3, sheep: 5, eagles: 2, cloudSprites: 90,  cloudPuffs: 130, birds: 14, rainDrops: 1400 },
+  low:    { shadows: false, shadowMap: 512,  shadowRange: 280, post: false, bloom: false, ao: false, waterEnv: 0.6, glitter: false, trees: 160, pines: 110, bushes: 110, flowers: 130, reeds: 55,  butterflies: 7,  deer: 3, cattle: 2, sheep: 3, eagles: 1, cloudSprites: 45,  cloudPuffs: 60,  birds: 8,  rainDrops: 800 },
 };
 
 /** Low-hull heartbeat: one period shared by the HUD edge pulse and the audio thump. */

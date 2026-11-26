@@ -209,6 +209,11 @@ export function createHud() {
   const windValue = el('wind-value');
   const damageFlash = el('damage-flash');
   const lightningFlash = el('lightning-flash');
+  const cloudWhite = el('cloud-white');
+  const radioBar = el('radio-bar');
+  const radioText = el('radio-text');
+  const glideEl = el('glide');
+  const glideDiamond = el('glide-diamond');
   const skipHint = el('skip-hint');
   const screenEls = {};
   for (const name of SCREENS) screenEls[name] = el(name);
@@ -270,6 +275,29 @@ export function createHud() {
   let toastTimer = 0;
   let damageTimer = 0;
   let lightningTimer = 0;
+  // Radio subtitle queue: one line on screen, short queue, min gap so
+  // traffic chatter never turns into spam.
+  const radioQueue = [];
+  let radioShowing = false;
+  let radioLastAt = -10000;
+  let radioTimer = 0;
+  function pumpRadio() {
+    if (radioShowing || !radioQueue.length) return;
+    const wait = Math.max(0, 6000 - (performance.now() - radioLastAt));
+    radioTimer = window.setTimeout(() => {
+      const text = radioQueue.shift();
+      if (text === undefined) return;
+      radioShowing = true;
+      radioLastAt = performance.now();
+      radioText.textContent = text;
+      radioBar.style.opacity = '1';
+      radioTimer = window.setTimeout(() => {
+        radioBar.style.opacity = '0';
+        radioShowing = false;
+        window.setTimeout(pumpRadio, 650);
+      }, 4200);
+    }, wait);
+  }
   let countupRaf = 0;
   const buffChips = new Map();
   const cardRefs = { map: new Map(), plane: new Map() };
@@ -457,6 +485,8 @@ export function createHud() {
       hullFill.style.background = frac > 0.5 ? '#35d3f0' : (frac > HULL_PULSE.threshold ? '#ffb020' : '#ff4b3e');
       hullValue.textContent = String(Math.max(0, Math.round(value)));
       hullPulseEl.classList.toggle('on', frac < HULL_PULSE.threshold);
+      // Under 40% the bar itself blinks — damage you can see at a glance.
+      hullFill.classList.toggle('low', frac < 0.4);
     },
 
     /** */
@@ -507,10 +537,14 @@ export function createHud() {
       targetMarker.style.left = `${x}px`;
       targetMarker.style.top = `${y}px`;
       targetMarker.style.transform = `translate(-50%, -50%) rotate(${edge ? angleDeg : 45}deg)`;
-      targetDist.textContent = edge ? '' : `${Math.round(dist)} m`;
+      // On-screen the marker breathes; off-screen it becomes a solid edge
+      // arrow — and the distance stays readable either way.
+      targetMarker.classList.toggle('pulse', !edge);
+      targetMarker.classList.toggle('edge', edge);
+      targetDist.textContent = `${Math.round(dist)} m`;
       targetDist.style.left = `${x}px`;
       targetDist.style.top = `${y + 26}px`;
-      targetDist.style.display = edge ? 'none' : 'block';
+      targetDist.style.display = 'block';
     },
 
     /** Floating "+N" beside the score when a ring is threaded. */
@@ -560,6 +594,27 @@ export function createHud() {
       lightningFlash.style.opacity = '0.85';
       window.clearTimeout(lightningTimer);
       lightningTimer = window.setTimeout(() => { lightningFlash.style.opacity = '0'; }, 70);
+    },
+
+    /** In-cloud whiteout: 0 clear .. ~0.6 deep inside a cloud. */
+    setCloudWhite(v) {
+      cloudWhite.style.opacity = String(Math.max(0, Math.min(0.85, v)));
+    },
+
+    /** Queue one radio subtitle line (callsign + text, pre-composed). */
+    showRadio(text) {
+      if (radioQueue.length >= 2) return;
+      radioQueue.push(text);
+      pumpRadio();
+    },
+
+    /** Glidepath indicator: diamond rides the scale, centre = on glide.
+     *  devDeg > 0 means above the glidepath. */
+    setGlide(show, devDeg) {
+      glideEl.style.display = show ? 'block' : 'none';
+      if (!show) return;
+      const px = Math.max(-42, Math.min(42, (devDeg || 0) * 14));
+      glideDiamond.style.transform = `translate(-50%, -50%) translateY(${-px}px) rotate(45deg)`;
     },
 
     toast(text, ms = 1800) {

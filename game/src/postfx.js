@@ -70,7 +70,7 @@ const COMPOSITE_FRAG = /* glsl */`
     // Cheap depth-based occlusion: neighbours closer to the camera than the
     // centre pixel darken it. Radius grows with distance so near geometry
     // keeps detail and far geometry does not shimmer.
-    float radius = clamp(-centreZ * 0.012, 1.5, 9.0);
+    float radius = clamp(-centreZ * 0.012, 1.5, 7.5);
     float occ = 0.0;
     float total = 0.0;
     for (int i = 0; i < 8; i++) {
@@ -150,8 +150,8 @@ export function createPostFx(renderer, scene, camera) {
     vertexShader: VERT, fragmentShader: COMPOSITE_FRAG, depthTest: false, depthWrite: false,
     uniforms: {
       tScene: { value: null }, tBloom: { value: null }, tDepth: { value: null },
-      uBloomStrength: { value: 0.3 }, uAoStrength: { value: 0.55 },
-      uExposure: { value: 1.08 }, uNear: { value: camera.near }, uFar: { value: camera.far },
+      uBloomStrength: { value: 0.27 }, uAoStrength: { value: 0.5 },
+      uExposure: { value: 1.05 }, uNear: { value: camera.near }, uFar: { value: camera.far },
       uTexel: { value: new THREE.Vector2(1 / 1280, 1 / 720) },
     },
   });
@@ -204,8 +204,8 @@ export function createPostFx(renderer, scene, camera) {
       enabled = supported && Boolean(q.post);
       bloomOn = enabled && Boolean(q.bloom);
       aoOn = enabled && Boolean(q.ao);
-      compMat.uniforms.uBloomStrength.value = bloomOn ? 0.3 : 0;
-      compMat.uniforms.uAoStrength.value = aoOn ? 0.55 : 0;
+      compMat.uniforms.uBloomStrength.value = bloomOn ? 0.27 : 0;
+      compMat.uniforms.uAoStrength.value = aoOn ? 0.5 : 0;
       if (!enabled) disposeTargets();
     },
 

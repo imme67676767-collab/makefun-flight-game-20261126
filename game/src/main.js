@@ -52,16 +52,20 @@ const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerH
 // The sun: one warm directional light with soft shadows that follow the
 // plane, plus a hemisphere fill — cool sky above, blue-grey ground bounce
 // below — so lit faces run warm and shadowed faces run cold.
-const sun = new THREE.DirectionalLight(0xffdfae, 2.9);
+const sun = new THREE.DirectionalLight(0xffd9a0, 3.0);
 sun.castShadow = true;
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 1.6;
+// Tight follow-box + 4096 map (high) makes texels small, so a gentler
+// normalBias suffices — less peter-panning / light leak on thin geometry,
+// still no acne on the terrain.
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.9;
 scene.add(sun);
 scene.add(sun.target);
-const hemi = new THREE.HemisphereLight(0xa8c8ee, 0x54606e, 0.8);
+// Cool sky fill vs the warm sun: shadowed faces read blue, lit faces gold.
+const hemi = new THREE.HemisphereLight(0x9fc4f2, 0x4e5e5a, 0.72);
 scene.add(hemi);
 // Faint warm bounce off the valley floor so undersides do not go dead.
-const bounce = new THREE.DirectionalLight(0xffd9b0, 0.22);
+const bounce = new THREE.DirectionalLight(0xffd9b0, 0.28);
 bounce.position.set(300, 120, 500);
 scene.add(bounce);
 
@@ -102,10 +106,11 @@ function applyQuality() {
   renderer.shadowMap.enabled = q.shadows;
   sun.castShadow = q.shadows;
   sun.shadow.mapSize.set(q.shadowMap, q.shadowMap);
-  sun.shadow.camera.left = -280;
-  sun.shadow.camera.right = 280;
-  sun.shadow.camera.top = 280;
-  sun.shadow.camera.bottom = -280;
+  const sr = q.shadowRange ?? 280;
+  sun.shadow.camera.left = -sr;
+  sun.shadow.camera.right = sr;
+  sun.shadow.camera.top = sr;
+  sun.shadow.camera.bottom = -sr;
   sun.shadow.camera.near = 10;
   sun.shadow.camera.far = 1600;
   if (sun.shadow.map) {
@@ -167,6 +172,11 @@ const game = {
   frozen: false,
   best: Number(localStorage.getItem(BEST_KEY) || 0),
   trailAcc: 0,
+  vortexAcc: 0,
+  cloud01: 0, // smoothed in-cloud factor (fog, whiteout, muffled audio)
+  radioAt: 0,
+  radioIdx: 0,
+  prevTrafficNear: false,
   prevPos: new THREE.Vector3(),
   weatherRollAt: 0,
   weatherPending: null,
@@ -190,6 +200,16 @@ const _v3 = new THREE.Vector3();
 const camPos = new THREE.Vector3(0, 30, 60);
 const camQuat = new THREE.Quaternion();
 let camInit = false;
+let fovSm = 62; // smoothed FOV: speed stretch eases in/out, never snaps
+
+/** Ease the camera FOV toward a target (snap=true for staged shots). */
+function setFov(target, snap = false) {
+  fovSm = snap ? target : fovSm + (target - fovSm) * (1 - Math.exp(-STEP / 0.35));
+  if (Math.abs(camera.fov - fovSm) > 0.05) {
+    camera.fov = fovSm;
+    camera.updateProjectionMatrix();
+  }
+}
 
 function onRunway(x, z) {
   for (const pad of [game.world.startPad, game.world.finishPad]) {
@@ -287,8 +307,14 @@ async function reset(seed, difficultyKey, mapKey = game.mapKey, planeKey = game.
   game.tornadoDamageAcc = 0;
   game.trafficNear = false;
   game.stormNear = false;
+  game.cloud01 = 0;
+  game.prevTrafficNear = false;
+  game.radioAt = game.time + 20;
   game.prevPos.copy(game.state.pos);
   camInit = false;
+  fx.clearSmoke();
+  hud.setCloudWhite(0);
+  hud.setGlide(false, 0);
   hud.setFade(0);
   hud.setWeatherBanner(null);
   hud.setBuffs([]);
@@ -436,11 +462,8 @@ function setChaseCamera(snap = false) {
   camera.lookAt(_v3);
   const speedNorm = Math.min(1, state.speed / 88);
   const boost01 = game.time < game.boostUntil ? 1 : 0;
-  const fov = 60 + speedNorm * 9 + boost01 * 6;
-  if (Math.abs(camera.fov - fov) > 0.15) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
-  }
+  // Speed stretch: +11 degrees at full speed, eased so it breathes.
+  setFov(60 + speedNorm * 11 + boost01 * 6, snap);
 }
 
 /** */
@@ -457,11 +480,7 @@ function setCockpitCamera() {
   }
   camera.quaternion.copy(camQuat);
   const boost01 = game.time < game.boostUntil ? 1 : 0;
-  const fov = 72 + boost01 * 5;
-  if (Math.abs(camera.fov - fov) > 0.15) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
-  }
+  setFov(72 + boost01 * 5);
 }
 
 /** Menu camera: a slow orbit around the parked plane. */
@@ -471,10 +490,7 @@ function setOrbitCamera(angle) {
   camera.up.set(0, 1, 0);
   camera.lookAt(p.x, p.y + 1, p.z);
   camera.translateX(7.6);
-  if (Math.abs(camera.fov - 58) > 0.15) {
-    camera.fov = 58;
-    camera.updateProjectionMatrix();
-  }
+  setFov(58, true);
 }
 
 /** Results camera: off the nose quarter, plane and runway in frame. */
@@ -483,10 +499,7 @@ function setSideCamera() {
   camera.position.set(p.x + 13, p.y + 3.6, p.z - 13);
   camera.up.set(0, 1, 0);
   camera.lookAt(p.x + 5, p.y + 0.8, p.z);
-  if (Math.abs(camera.fov - 55) > 0.15) {
-    camera.fov = 55;
-    camera.updateProjectionMatrix();
-  }
+  setFov(55, true);
 }
 
 const CINEMATIC_SECONDS = 5.2;
@@ -536,10 +549,7 @@ function setCinematicCamera(frac) {
   camera.position.copy(_cinePos);
   camera.up.set(0, 1, 0);
   camera.lookAt(_cineLook);
-  if (Math.abs(camera.fov - 60) > 0.15) {
-    camera.fov = 60;
-    camera.updateProjectionMatrix();
-  }
+  setFov(60, true);
 }
 
 /** Celebration camera: a slow orbit around the finished plane. */
@@ -548,10 +558,7 @@ function setCelebrationCamera(angle) {
   camera.position.set(p.x + Math.sin(angle) * 16, p.y + 5.2, p.z + Math.cos(angle) * 16);
   camera.up.set(0, 1, 0);
   camera.lookAt(p.x, p.y + 1.2, p.z);
-  if (Math.abs(camera.fov - 56) > 0.15) {
-    camera.fov = 56;
-    camera.updateProjectionMatrix();
-  }
+  setFov(56, true);
 }
 
 /** Keep the sun's shadow box centred on the plane, snapped to reduce shimmer. */
@@ -616,8 +623,11 @@ function updateTargetMarker() {
   }
   targetPoint(_v1);
   const dist = _v1.distanceTo(game.state.pos);
+  // Behind test by view direction: NDC z alone misses a target dead
+  // astern (the perspective divide flips it back near screen centre).
+  camera.getWorldDirection(_v3);
+  const behind = _v3.dot(_v2.copy(_v1).sub(camera.position)) < 0;
   _v2.copy(_v1).project(camera);
-  const behind = _v2.z > 1;
   let x = (_v2.x * 0.5 + 0.5) * window.innerWidth;
   let y = (-_v2.y * 0.5 + 0.5) * window.innerHeight;
   const margin = 54;
@@ -727,6 +737,7 @@ function respawnAfterCrash() {
   game.hp = game.maxHp;
   game.tornadoDamageAcc = 0;
   camInit = false;
+  fx.clearSmoke();
 }
 
 /** The hull hits zero: fireball, penalty, fade back to the last ring. */
@@ -787,6 +798,7 @@ function collectPickup(item) {
   } else {
     const healed = Math.min(HEALTH.repairAmount, game.maxHp - game.hp);
     game.hp += healed;
+    if (game.hp >= game.maxHp * 0.4) fx.clearSmoke();
     hud.toast(t('toast.repair', { n: Math.round(healed) }), 1100);
   }
 }
@@ -858,10 +870,29 @@ function step(dt, rawInput) {
       hud.toast(t('toast.stormStrike'), 1200);
     }
   }
+  // Inside a cloud puff? Ellipsoid test against the live puff positions
+  // (they drift with the world update). cloud01 eases in/out so the
+  // whiteout, fog and muffled audio all breathe instead of snapping.
+  let inPuff = false;
+  if (state.pos.y > 300 && state.pos.y < 560 && game.world.cloudPuffs) {
+    for (const p of game.world.cloudPuffs) {
+      const dx = (state.pos.x - p.x) / p.s;
+      const dy = (state.pos.y - p.y) / (p.s * 0.42);
+      const dz = (state.pos.z - p.z) / (p.s * 0.8);
+      if (dx * dx + dy * dy + dz * dz < 1.2) { inPuff = true; break; }
+    }
+  }
+  const cloudTarget = (inPuff || inStormCell) && state.airborne ? 1 : 0;
+  game.cloud01 += (cloudTarget - game.cloud01) * Math.min(1, dt * (cloudTarget ? 1.6 : 0.9));
+  if (game.cloud01 < 0.002) game.cloud01 = 0;
+  hud.setCloudWhite(game.cloud01 * 0.6);
+
   const targetFog = inStormCell ? 500 : (wfx.fogFar ?? WORLD.fogFar);
   // Exponential fog: map the old linear "far" distances onto a density so
-  // weather still closes the world in exactly as before.
-  const targetDensity = 0.65 / targetFog;
+  // weather still closes the world in exactly as before. Cloud adds its
+  // own density floor: deep inside, sight shrinks to ~200 m.
+  let targetDensity = 0.65 / targetFog;
+  if (game.cloud01 > 0) targetDensity = Math.max(targetDensity, game.cloud01 * 0.0032);
   scene.fog.density += (targetDensity - scene.fog.density) * Math.min(1, dt * 1.5);
 
   const windTotal = Math.hypot(wfx.windX, wfx.windZ);
@@ -873,7 +904,7 @@ function step(dt, rawInput) {
 
   // Turbulence shakes the stick; the boost pickup stretches the speed target.
   const stickIn = { ...rawInput };
-  const turbulence = wfx.turbulence + (inStormCell && state.airborne ? 0.5 : 0);
+  const turbulence = wfx.turbulence + (inStormCell && state.airborne ? 0.5 : 0) + game.cloud01 * 0.18;
   if (turbulence > 0 && state.airborne) {
     stickIn.pitch = Math.max(-1, Math.min(1, (stickIn.pitch || 0) + (Math.random() - 0.5) * turbulence));
     stickIn.roll = Math.max(-1, Math.min(1, (stickIn.roll || 0) + (Math.random() - 0.5) * turbulence));
@@ -971,6 +1002,38 @@ function step(dt, rawInput) {
       fx.trailPuff(_v1, state.speed / 88);
       fx.trailPuff(_v2, state.speed / 88);
     }
+    // Vortex ribbons: a hard bank or real speed pulls a bright white
+    // stream off each tip, over and above the faint vapour.
+    const vortex01 = Math.max(
+      Math.min(1, Math.max(0, (Math.abs(state.roll) - 0.45) / 0.6)),
+      Math.min(1, Math.max(0, (state.speed - 62) / 26)),
+    );
+    if (vortex01 > 0.05) {
+      game.vortexAcc += dt * vortex01 * 30;
+      while (game.vortexAcc > 1) {
+        game.vortexAcc -= 1;
+        fx.vortexPuff(_v1, vortex01);
+        fx.vortexPuff(_v2, vortex01);
+      }
+    }
+  }
+
+  // Damage smoke: under 40% hull the engine trails dark smoke, thicker
+  // as she gets worse, with the odd spark under 25%. Repair/respawn
+  // restores the hull, so the emitter stops on its own (and clearSmoke
+  // wipes the stragglers instantly).
+  const hullFrac = game.maxHp ? game.hp / game.maxHp : 1;
+  if (hullFrac < 0.4 && game.mode === 'flying') {
+    const smoke01 = (0.4 - hullFrac) / 0.4;
+    forwardOf(state, _v3);
+    _v3.multiplyScalar(2.6).add(state.pos); // engine, ahead of the wing
+    _v1.copy(state.vel).multiplyScalar(-0.35); // smoke carried backward
+    fx.setSmoke(_v3, smoke01, _v1);
+    if (hullFrac < 0.25 && Math.random() < dt * 1.6) {
+      fx.burst(_v3, 0xffa040, 4, 5, 0.35, 1.2);
+    }
+  } else {
+    fx.setSmoke(state.pos, 0);
   }
 
   syncPlaneModel(model, state, dt, game.time);
@@ -981,9 +1044,12 @@ function step(dt, rawInput) {
   if (game.cameraMode === 'cockpit') setCockpitCamera();
   else setChaseCamera();
 
-  // Engine shudder: a whisper of shake that grows with the throttle.
+  // Engine shudder: a whisper of shake that grows with the throttle,
+  // plus a high-speed edge tremor and in-cloud buffet.
   if (game.mode === 'flying') {
-    const shake = state.throttle * 0.05 + (state.stalled ? 0.22 : 0);
+    const speedNorm = Math.min(1, state.speed / 88);
+    const fastShake = speedNorm > 0.78 ? (speedNorm - 0.78) * 0.5 : 0;
+    const shake = state.throttle * 0.05 + (state.stalled ? 0.22 : 0) + fastShake + game.cloud01 * 0.14;
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
   }
@@ -996,8 +1062,42 @@ function step(dt, rawInput) {
     speed: state.speed,
     stalled: state.stalled,
     hullFrac: game.maxHp ? game.hp / game.maxHp : 1,
-    inCloud: game.stormNear,
+    inCloud: game.stormNear || game.cloud01 > 0.35,
   });
+
+  // Approach guidance: PAPI lights track the glide angle (3 degrees is
+  // the path; 2 white + 2 red = on it), and the HUD diamond shows the
+  // deviation whenever she is lined up on the far runway.
+  {
+    const pad = game.world.finishPad;
+    const dx = pad.x - state.pos.x;
+    const dz = pad.z - state.pos.z;
+    const horiz = Math.hypot(dx, dz);
+    const glideDeg = Math.atan2(state.pos.y - pad.h, Math.max(1, horiz)) * 180 / Math.PI;
+    const devDeg = glideDeg - 3;
+    if (horiz < 2600) game.world.setPapi(2 + Math.round(devDeg / 0.7));
+    forwardOf(state, _v1);
+    const toward = horiz > 1 ? (_v1.x * dx + _v1.z * dz) / horiz : 0;
+    const onFinal = state.airborne && game.mode === 'flying' && horiz < 1600 && toward > 0.45;
+    hud.setGlide(onFinal, devDeg);
+    game.glideDev = devDeg; // probe/debug
+  }
+
+  // Radio chatter: a call when traffic gets close, idle lines in between.
+  if (game.mode === 'flying' && state.airborne) {
+    const callsigns = ['SKY-3', 'FALCON-2', 'ORBIT-5', 'VIPER-1', 'HERON-4'];
+    if (game.trafficNear && !game.prevTrafficNear) {
+      const cs = callsigns[game.radioIdx++ % callsigns.length];
+      hud.showRadio(`${cs}: ${t(`radio.${1 + (game.radioIdx % 3)}`)}`);
+      game.radioAt = game.time + 25 + Math.random() * 25;
+    } else if (game.radioAt > 0 && game.time >= game.radioAt) {
+      const cs = callsigns[game.radioIdx++ % callsigns.length];
+      hud.showRadio(`${cs}: ${t(`radio.${4 + (game.radioIdx % 5)}`)}`);
+      game.radioAt = game.time + 25 + Math.random() * 25;
+    }
+  }
+  game.prevTrafficNear = game.trafficNear;
+
   syncHud();
 }
 
@@ -1275,7 +1375,7 @@ game.reset = reset;
 game.respawnAfterCrash = respawnAfterCrash;
 game.heightAt = heightAt;
 game.placeInAir = placeInAir;
-game.debug = { input, getSettings, renderer, audio, get weather() { return weather; } };
+game.debug = { input, getSettings, renderer, audio, camera, scene, hud, fx, model: () => model, get weather() { return weather; } };
 window.__game = game; // debug/inspection hook (harmless in normal play)
 
 const IDLE_MODES = new Set(['title', 'mapselect', 'planeselect', 'difficulty', 'help', 'best', 'finished']);

@@ -313,6 +313,21 @@ function houseTexture() {
   });
 }
 
+/** Emissive companion to houseTexture: only the window panes, warm-lit,
+ *  so village windows glow at dusk. Same layout, no rng draws. */
+function houseGlowTexture() {
+  return canvasTexture(256, 160, (ctx, w, h) => {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+    for (const x of [28, 96, 164, 216]) {
+      ctx.fillStyle = '#ffb45e';
+      ctx.fillRect(x + 4, 42, 22, 30);
+      ctx.fillStyle = 'rgba(255,214,150,0.85)';
+      ctx.fillRect(x + 7, 45, 16, 24);
+    }
+  });
+}
+
 /** Runway asphalt: centreline dashes, threshold bars and the runway number. */
 function runwayTexture(number) {
   return canvasTexture(256, 1024, (ctx, w, h) => {
@@ -662,7 +677,7 @@ function buildSky() {
         col = mix(col, topColor * 0.82, smoothstep(0.45, 1.0, h) * 0.55);
         float sunAmt = max(dot(dir, sunDirection), 0.0);
         // Tight solar disc, inner halo and a wide warm forward-scatter glow.
-        col += sunColor * (pow(sunAmt, 1400.0) * 3.2 + pow(sunAmt, 220.0) * 0.9 + pow(sunAmt, 8.0) * 0.16);
+        col += sunColor * (pow(sunAmt, 1400.0) * 2.6 + pow(sunAmt, 220.0) * 0.75 + pow(sunAmt, 8.0) * 0.16);
         // Warm tint low around the sun azimuth, like late-afternoon haze.
         col += vec3(1.0, 0.72, 0.42) * pow(sunAmt, 3.0) * pow(1.0 - h, 3.0) * 0.16;
         col = mix(col, vec3(0.42, 0.47, 0.54), stormFactor * 0.75);
@@ -795,7 +810,7 @@ function buildCloudShadows(clusters) {
   geo.rotateX(-Math.PI / 2);
   const shadows = clusters.map((cl) => {
     const mat = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, opacity: 0.34, depthWrite: false,
+      map: tex, transparent: true, opacity: 0.3, depthWrite: false,
       polygonOffset: true, polygonOffsetFactor: -2,
     });
     const m = new THREE.Mesh(geo, mat);
@@ -980,6 +995,90 @@ function buildRocks(rng) {
   return rocks;
 }
 
+/** Poplars: tall thin windbreak trees along the valley floor. Private rng
+ *  (passed in) so the shared placement sequence stays untouched. */
+function buildPoplars(rng, quality, clearSpots) {
+  const group = new THREE.Group();
+  const count = Math.round((quality.trees ?? 300) * 0.16);
+  const trunkGeo = new THREE.CylinderGeometry(0.09, 0.22, 3.4, 5);
+  trunkGeo.translate(0, 1.7, 0);
+  const crownGeo = new THREE.IcosahedronGeometry(1, 1);
+  crownGeo.scale(0.62, 2.5, 0.62);
+  crownGeo.translate(0, 5.2, 0);
+  const trunks = new THREE.InstancedMesh(trunkGeo, std(0x6d5138, 1), count);
+  const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({
+    color: 0x3d7a3a, roughness: 1, flatShading: true,
+  }), count);
+  trunks.castShadow = true;
+  crowns.castShadow = true;
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  let placed = 0;
+  let guard = 0;
+  while (placed < count && guard < count * 14) {
+    guard++;
+    const x = range(rng, -2600, 2600);
+    const z = range(rng, -3200, 3200);
+    const h = heightAt(x, z);
+    if (h > 150 || slopeAt(x, z) > 0.3) continue;
+    if (Math.abs(x - pathX(z)) < 34) continue;
+    let blocked = false;
+    for (const spot of clearSpots) {
+      if (Math.hypot(x - spot.x, z - spot.z) < spot.r) { blocked = true; break; }
+    }
+    if (blocked) continue;
+    dummy.position.set(x, h - 0.15, z);
+    dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+    dummy.scale.setScalar(range(rng, 1.1, 1.9));
+    dummy.updateMatrix();
+    trunks.setMatrixAt(placed, dummy.matrix);
+    crowns.setMatrixAt(placed, dummy.matrix);
+    tint.setHSL(0.27 + rng() * 0.04, 0.4 + rng() * 0.18, 0.34 + rng() * 0.14);
+    crowns.setColorAt(placed, tint);
+    placed++;
+  }
+  trunks.count = placed;
+  crowns.count = placed;
+  trunks.instanceMatrix.needsUpdate = true;
+  crowns.instanceMatrix.needsUpdate = true;
+  if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
+  group.add(trunks, crowns);
+  return group;
+}
+
+/** Flat rock slabs: a second rock variant, tilted plates half-buried on
+ *  the slopes. Private rng, bounded count. */
+function buildRockSlabs(rng) {
+  const geo = new THREE.BoxGeometry(1, 0.32, 1);
+  const mat = std(0x7e7c78, 0.95);
+  const count = 70;
+  const slabs = new THREE.InstancedMesh(geo, mat, count);
+  slabs.castShadow = true;
+  slabs.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  let placed = 0;
+  let guard = 0;
+  while (placed < count && guard < count * 10) {
+    guard++;
+    const x = range(rng, -3300, 3300);
+    const z = range(rng, -3300, 3300);
+    const h = heightAt(x, z);
+    if (h < 60) continue;
+    if (Math.abs(x - pathX(z)) < 20) continue;
+    if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r) continue;
+    const s = range(rng, 1.2, 4.2);
+    dummy.position.set(x, h + s * 0.08, z);
+    dummy.rotation.set(range(rng, -0.35, 0.35), rng() * Math.PI * 2, range(rng, -0.35, 0.35));
+    dummy.scale.set(s, s, s * range(rng, 0.6, 1));
+    dummy.updateMatrix();
+    slabs.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  slabs.count = placed;
+  slabs.instanceMatrix.needsUpdate = true;
+  return slabs;
+}
+
 /** A ribbon that hugs the terrain along the canyon (river, road). */
 function buildRibbon(offsetX, width, lift, material) {
   const positions = [];
@@ -1030,13 +1129,14 @@ function buildBridge(z) {
 }
 
 /** One house: textured walls, pyramid roof, chimney. */
-function buildHouse(rng, wallTex, roofMats) {
+function buildHouse(rng, wallTex, glowTex, roofMats) {
   const house = new THREE.Group();
   const w = range(rng, 5.5, 8);
   const d = range(rng, 4.5, 6.5);
   const hgt = range(rng, 2.8, 3.6);
   const wallMat = new THREE.MeshStandardMaterial({
     map: wallTex, roughness: 0.9,
+    emissive: 0xffc98a, emissiveMap: glowTex, emissiveIntensity: 0.7,
     color: new THREE.Color().setHSL(rng() * 0.12, 0.25, range(rng, 0.82, 0.97)),
   });
   addMesh(house, new THREE.BoxGeometry(w, hgt, d), wallMat, 0, hgt / 2, 0);
@@ -1129,6 +1229,7 @@ function buildVillages(rng, clearSpots, count = 3) {
   const group = new THREE.Group();
   const smokeEmitters = [];
   const wallTex = houseTexture();
+  const glowTex = houseGlowTexture();
   const roofMats = [std(0xa8442e, 0.85), std(0x5d6d7e, 0.85), std(0x7a4a35, 0.85)];
   const sites = [];
   for (let i = 0; i < count; i++) {
@@ -1146,7 +1247,7 @@ function buildVillages(rng, clearSpots, count = 3) {
     for (let i = 0; i < n; i++) {
       const x = baseX + range(rng, -55, 55);
       const z = site.z + range(rng, -60, 60);
-      const house = buildHouse(rng, wallTex, roofMats);
+      const house = buildHouse(rng, wallTex, glowTex, roofMats);
       house.position.set(x, heightAt(x, z) - 0.2, z);
       house.rotation.y = rng() * Math.PI * 2;
       group.add(house);
@@ -1733,11 +1834,51 @@ function buildLake(rng, quality) {
   const waterMat = new THREE.MeshStandardMaterial({
     color: COLORS.river, metalness: 0.85, roughness: 0.13, transparent: true, opacity: 0.97,
   });
+  // Full-strength sky reflection on the water (tiered by quality) so the
+  // PMREM sun spot glints off the surface; scenery stays at a whisper.
+  waterMat.userData.envI = quality.waterEnv ?? 0.8;
   const water = new THREE.Mesh(new THREE.CircleGeometry(LAKE.r * 0.96, 44), waterMat);
   water.rotation.x = -Math.PI / 2;
   water.position.set(LAKE.x, LAKE.level, LAKE.z);
   water.receiveShadow = true;
   group.add(water);
+  // Sun glitter path: an additive streaked band laid along the sun azimuth
+  // through the lake centre — the bright lane a real low sun draws on
+  // water. Skipped on low tier.
+  let glitterMat = null;
+  if (quality.glitter) {
+    const glitterTex = canvasTexture(128, 256, (ctx, w, h) => {
+      ctx.clearRect(0, 0, w, h);
+      for (let i = 0; i < 340; i++) {
+        const x = w / 2 + (Math.random() - 0.5) * w * 0.72;
+        const y = Math.random() * h;
+        const len = 5 + Math.random() * 16;
+        const fall = 1 - Math.abs(x - w / 2) / (w * 0.5);
+        ctx.fillStyle = `rgba(255,238,196,${0.1 + fall * 0.5})`;
+        ctx.fillRect(x, y, 1.6, len);
+      }
+      const fade = ctx.createLinearGradient(0, 0, 0, h);
+      fade.addColorStop(0, 'rgba(0,0,0,1)');
+      fade.addColorStop(0.18, 'rgba(0,0,0,0)');
+      fade.addColorStop(0.82, 'rgba(0,0,0,0)');
+      fade.addColorStop(1, 'rgba(0,0,0,1)');
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = fade;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    });
+    glitterMat = new THREE.MeshBasicMaterial({
+      map: glitterTex, transparent: true, opacity: 0.32, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const glitterGeo = new THREE.PlaneGeometry(110, LAKE.r * 1.7);
+    glitterGeo.rotateX(-Math.PI / 2);
+    const glitter = new THREE.Mesh(glitterGeo, glitterMat);
+    glitter.position.set(LAKE.x, LAKE.level + 0.18, LAKE.z);
+    glitter.rotation.y = Math.atan2(SUN_DIR.x, SUN_DIR.z);
+    glitter.renderOrder = 3;
+    group.add(glitter);
+  }
   group.add(buildInlet());
 
   // Dock reaching in from the west shore, posts down into the water.
@@ -1793,7 +1934,7 @@ function buildLake(rng, quality) {
   reeds.instanceMatrix.needsUpdate = true;
   group.add(reeds);
 
-  return { group, waterMat, boats };
+  return { group, waterMat, boats, glitterMat };
 }
 
 /** Conifer belt: instanced pines (trunk + three stacked cones) on the slopes. */
@@ -2135,6 +2276,43 @@ function buildRunway(pad, number) {
     const z = -WORLD.runwayLength / 2 + 14 + i * 62;
     addMesh(group, new THREE.ConeGeometry(0.9, 1.9, 8), coneMat, WORLD.runwayWidth / 2 + 5, 0.95, z);
   }
+  // PAPI: four approach lights in a row beside the threshold, facing the
+  // incoming pilot (approach is from +Z, so lenses face +Z, row on the
+  // pilot's left at -X). setWhite(n): n white + (4-n) red — 2+2 on glide.
+  const papiLenses = [];
+  const papiHalos = [];
+  const papiBoxMat = std(0x2b2f36, 0.7, 0.2);
+  for (let i = 0; i < 4; i++) {
+    const px = -(WORLD.runwayWidth / 2 + 3.4 + i * 3.2);
+    const pz = WORLD.runwayLength / 2 - 26;
+    addMesh(group, new THREE.BoxGeometry(0.34, 0.9, 0.34), papiBoxMat, px, 0.45, pz);
+    addMesh(group, new THREE.BoxGeometry(0.62, 0.44, 0.3), papiBoxMat, px, 1.05, pz);
+    const lensMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.32), lensMat);
+    lens.position.set(px, 1.05, pz + 0.16);
+    lens.userData.papiIndex = i;
+    group.add(lens);
+    papiLenses.push(lensMat);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.55,
+    }));
+    halo.position.set(px, 1.05, pz + 0.3);
+    halo.scale.set(3.4, 3.4, 1);
+    group.add(halo);
+    papiHalos.push(halo.material);
+  }
+  group.userData.papi = {
+    lenses: papiLenses,
+    setWhite(n) {
+      const white = Math.max(0, Math.min(4, Math.round(n)));
+      for (let i = 0; i < 4; i++) {
+        const isWhite = i < white;
+        papiLenses[i].color.set(isWhite ? 0xffffff : 0xff2a1e);
+        papiHalos[i].color.set(isWhite ? 0xfff6e0 : 0xff5040);
+      }
+    },
+  };
+  group.userData.papi.setWhite(2);
   return group;
 }
 
@@ -2222,7 +2400,7 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   const sky = buildSky();
   group.add(sky.dome);
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: sunTexture(), transparent: true, depthWrite: false, fog: false,
+    map: sunTexture(), transparent: true, opacity: 0.92, depthWrite: false, fog: false,
   }));
   sunSprite.scale.set(1500, 1500, 1);
   group.add(sunSprite);
@@ -2230,9 +2408,11 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   await report(0.04, 'terrain');
   group.add(buildTerrain());
 
-  const river = buildRibbon(0, 15, 1.15, new THREE.MeshStandardMaterial({
+  const riverMat = new THREE.MeshStandardMaterial({
     color: COLORS.river, metalness: 0.55, roughness: 0.18, transparent: true, opacity: 0.94,
-  }));
+  });
+  riverMat.userData.envI = 0.9; // same sun-glint family as the lake
+  const river = buildRibbon(0, 15, 1.15, riverMat);
   group.add(river);
   const road = buildRibbon(38, 9, 0.55, std(0xc9b18a, 1));
   group.add(road);
@@ -2251,6 +2431,8 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   group.add(buildBushes(createRandom(seed ^ 0xB05E5), quality, clearSpots)); // private rng: keep shared sequence intact
   group.add(buildFlowers(rng, quality, clearSpots));
   group.add(buildRocks(rng));
+  group.add(buildPoplars(createRandom(seed ^ 0xB0B1), quality, clearSpots)); // private rng
+  group.add(buildRockSlabs(createRandom(seed ^ 0x51AB))); // private rng
   await report(0.55, 'buildings');
   const villages = buildVillages(rng, clearSpots, mapDef.villages);
   group.add(villages.group);
@@ -2290,7 +2472,8 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
   const startPad = { x: pathX(WORLD.startZ), z: WORLD.startZ, h: padHeightAt(WORLD.startZ) };
   const finishPad = { x: pathX(WORLD.finishZ), z: WORLD.finishZ, h: padHeightAt(WORLD.finishZ) };
   group.add(buildRunway(startPad, '36'));
-  group.add(buildRunway(finishPad, '18'));
+  const finishRunway = buildRunway(finishPad, '18');
+  group.add(finishRunway);
 
   const ringSet = buildRings(rng, difficulty, mapDef);
   group.add(ringSet.group);
@@ -2332,13 +2515,17 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
     strikeBirdAt: birds.strikeBirdAt,
     trafficPositions: traffic.trafficPositions,
     stormCells: stormClouds.cells,
+    cloudPuffs: clouds.puffData, // live positions (drift in update) for in-cloud tests
+    papiLenses: finishRunway.userData.papi.lenses,
+    /** PAPI approach lights on the finish runway: n white + (4-n) red. */
+    setPapi(n) { finishRunway.userData.papi.setWhite(n); },
     /** Grey the sky and clouds over as a storm rolls in (0 clear, 1 storm). */
     setStorm(f) {
       sky.uniforms.stormFactor.value = f;
       clouds.spriteMat.color.copy(cloudWhite).lerp(cloudGrey, f);
       clouds.puffMat.color.copy(cloudWhite).lerp(cloudGrey, f);
       clouds.topMat.color.copy(cloudWhite).lerp(cloudGrey, f);
-      sunSprite.material.opacity = 1 - f * 0.85;
+      sunSprite.material.opacity = 0.92 * (1 - f * 0.85);
     },
     /** Animate the living scenery; focus is the plane (sun + dome follow). */
     update(dt, time, focus, currentRing) {
@@ -2405,6 +2592,7 @@ export async function buildWorld(scene, seed, difficulty, qualityKey = 'high', m
 
       // Lake: sun-glint shimmer, boats bobbing (one slowly drifting).
       lake.waterMat.roughness = 0.13 + 0.05 * Math.sin(time * 0.7);
+      if (lake.glitterMat) lake.glitterMat.opacity = 0.3 + 0.08 * Math.sin(time * 0.9);
       for (const boat of lake.boats) {
         const bob = Math.sin(time * 0.9 + boat.phase) * 0.14;
         if (boat.drift) {

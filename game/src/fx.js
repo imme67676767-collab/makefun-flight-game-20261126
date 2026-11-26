@@ -70,6 +70,21 @@ export function createFx(scene) {
     ripplePool.push({ mesh: ripple, t: 1 });
   }
 
+  // Engine smoke: dark sprites (normal blending — the additive point pool
+  // cannot do dark smoke). A small fixed pool; the emitter state is set
+  // every frame by setSmoke() and consumed here in update().
+  const smokePool = [];
+  const smokeTex = puffTexture();
+  for (let i = 0; i < 26; i++) {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: smokeTex, color: 0x4a4642, transparent: true, opacity: 0, depthWrite: false,
+    }));
+    sprite.visible = false;
+    scene.add(sprite);
+    smokePool.push({ sprite, age: 1, life: 1, vx: 0, vy: 0, vz: 0, grow: 2 });
+  }
+  const smokeEmit = { rate01: 0, acc: 0, pos: new THREE.Vector3(), drift: new THREE.Vector3() };
+
   function spawn(x, y, z, vx, vy, vz, color, lifeSeconds, gravityFactor, dragFactor) {
     const i = cursor;
     cursor = (cursor + 1) % POOL;
@@ -122,6 +137,47 @@ export function createFx(scene) {
       );
     },
 
+    /** One bright vortex puff from a wingtip: whiter and longer-lived than
+     *  the faint speed vapour, so a hard bank draws a visible ribbon. */
+    vortexPuff(pos, strength) {
+      _color.setRGB(0.52, 0.55, 0.6);
+      spawn(
+        pos.x + (Math.random() - 0.5) * 0.3,
+        pos.y + (Math.random() - 0.5) * 0.3,
+        pos.z + (Math.random() - 0.5) * 0.3,
+        (Math.random() - 0.5) * 0.8,
+        -0.5 - Math.random() * 0.6,
+        (Math.random() - 0.5) * 0.8,
+        _color, 0.8 + strength * 0.7, -0.25, 0.35,
+      );
+    },
+
+    /** Point the smoke emitter: rate01 0 (healthy) .. 1 (about to quit).
+     *  drift is the backward airflow the smoke should be carried by. */
+    setSmoke(pos, rate01, drift) {
+      smokeEmit.pos.copy(pos);
+      smokeEmit.rate01 = Math.max(0, Math.min(1, rate01));
+      if (drift) smokeEmit.drift.copy(drift);
+    },
+
+    /** Kill every live smoke sprite at once (repair / respawn). */
+    clearSmoke() {
+      smokeEmit.rate01 = 0;
+      smokeEmit.acc = 0;
+      for (const s of smokePool) {
+        s.age = s.life;
+        s.sprite.visible = false;
+        s.sprite.material.opacity = 0;
+      }
+    },
+
+    /** How many smoke sprites are currently alive (probe/debug). */
+    smokeAlive() {
+      let n = 0;
+      for (const s of smokePool) if (s.age < s.life) n++;
+      return n;
+    },
+
     /** The crash fireball: a bright sphere that swells and fades in half a second. */
     flash(pos) {
       const slot = flashPool.find((f) => f.t >= 1) || flashPool[0];
@@ -163,6 +219,39 @@ export function createFx(scene) {
       }
       geo.attributes.position.needsUpdate = true;
       geo.attributes.color.needsUpdate = true;
+
+      // Smoke: spawn at a rate that grows with damage, then age each puff.
+      if (smokeEmit.rate01 > 0.01) {
+        smokeEmit.acc += dt * (4 + smokeEmit.rate01 * 16);
+        while (smokeEmit.acc >= 1) {
+          smokeEmit.acc -= 1;
+          const slot = smokePool.find((s) => s.age >= s.life);
+          if (!slot) break;
+          slot.age = 0;
+          slot.life = 1.1 + Math.random() * 0.6;
+          slot.grow = 2.2 + smokeEmit.rate01 * 1.6;
+          slot.sprite.position.copy(smokeEmit.pos);
+          slot.sprite.position.x += (Math.random() - 0.5) * 0.3;
+          slot.sprite.position.y += (Math.random() - 0.5) * 0.3;
+          slot.sprite.position.z += (Math.random() - 0.5) * 0.3;
+          slot.vx = smokeEmit.drift.x + (Math.random() - 0.5) * 1.4;
+          slot.vy = smokeEmit.drift.y + 0.7 + Math.random() * 0.5;
+          slot.vz = smokeEmit.drift.z + (Math.random() - 0.5) * 1.4;
+          slot.sprite.visible = true;
+        }
+      }
+      for (const s of smokePool) {
+        if (s.age >= s.life) continue;
+        s.age += dt;
+        const f = Math.min(1, s.age / s.life);
+        s.sprite.position.x += s.vx * dt;
+        s.sprite.position.y += s.vy * dt;
+        s.sprite.position.z += s.vz * dt;
+        const size = 0.8 + f * s.grow;
+        s.sprite.scale.set(size, size * 0.8, 1);
+        s.sprite.material.opacity = 0.5 * (1 - f) * Math.min(1, s.age * 5);
+        if (f >= 1) s.sprite.visible = false;
+      }
 
       for (const slot of flashPool) {
         if (slot.t >= 1) continue;
