@@ -2,11 +2,7 @@
 // and clouds, which is what makes the screenshot scenes repeatable: seed 1
 // flies the same course in the screenshots as it does for a player.
 
-/**
- * A small fast PRNG (mulberry32 family). Returns a function giving floats in
- * [0, 1). The state lives in the closure so several independent streams can
- * run side by side (terrain, decoration, gusts).
- */
+/** */
 export function createRandom(seed) {
   let state = (seed | 0) || 1;
   return function next() {

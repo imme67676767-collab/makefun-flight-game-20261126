@@ -37,7 +37,7 @@ export function createFx(scene) {
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
   const points = new THREE.Points(geo, new THREE.PointsMaterial({
-    size: 1.2,
+    size: 0.85,
     map: puffTexture(),
     vertexColors: true,
     transparent: true,
