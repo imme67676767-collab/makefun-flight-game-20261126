@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky Ring Runner — a low-poly flight game</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #79a8d8; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f4f8ff; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+  .panel {
+    position: absolute; background: rgba(8, 20, 36, 0.62); border: 1px solid rgba(150, 200, 255, 0.35);
+    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(3px);
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+  }
+  .panel .row { display: flex; justify-content: space-between; gap: 18px; line-height: 1.5; }
+  .panel .label { font-size: 11px; letter-spacing: 0.14em; color: #9fc6ee; text-transform: uppercase; align-self: center; }
+  .panel .value { font-size: 21px; font-weight: 800; color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); font-variant-numeric: tabular-nums; }
+  #panel-left { top: 16px; left: 16px; width: 196px; }
+  #panel-right { top: 16px; right: 16px; width: 196px; }
+  #compass { margin-top: 6px; width: 180px; height: 24px; overflow: hidden; position: relative;
+    background: rgba(4, 12, 24, 0.55); border-radius: 5px; border: 1px solid rgba(150,200,255,0.25); }
+  #compass-strip { position: absolute; top: 0; left: 0; white-space: nowrap; will-change: transform; }
+  #compass-strip .tick { display: inline-block; width: 45px; text-align: center; font-size: 12px; line-height: 24px; color: #b9d6f2; }
+  #compass-strip .tick.major { color: #ffd97a; font-weight: 800; font-size: 13px; }
+  #compass::after { content: ""; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: #ffc93c; transform: translateX(-50%); }
+
+  #horizon-wrap { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); width: 118px; height: 118px;
+    border-radius: 50%; overflow: hidden; border: 2px solid rgba(180, 220, 255, 0.55); background: #79a8d8;
+    box-shadow: 0 2px 14px rgba(0,0,0,0.4); }
+  #horizon-ball { position: absolute; left: -41px; top: -41px; width: 200px; height: 200px; will-change: transform; }
+  #horizon-ball .sky { position: absolute; left: 0; top: 0; width: 200px; height: 100px; background: linear-gradient(#3d7fd6, #8ec3ee); }
+  #horizon-ball .gnd { position: absolute; left: 0; top: 100px; width: 200px; height: 100px; background: linear-gradient(#7d5a33, #4c3a20); }
+  #horizon-ball .line { position: absolute; left: 0; top: 98px; width: 200px; height: 3px; background: #ffffff; }
+  #horizon-fixed { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 64px; height: 14px; }
+  #horizon-fixed::before { content: ""; position: absolute; left: 0; top: 6px; width: 22px; height: 3px; background: #ffc93c; }
+  #horizon-fixed::after { content: ""; position: absolute; right: 0; top: 6px; width: 22px; height: 3px; background: #ffc93c; }
+  #horizon-dot { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: #ffc93c; transform: translate(-50%, -50%); }
+
+  #throttle-wrap { position: absolute; left: calc(50% + 84px); bottom: 26px; width: 20px; height: 118px;
+    background: rgba(8, 20, 36, 0.62); border: 1px solid rgba(150,200,255,0.35); border-radius: 6px; overflow: hidden; }
+  #throttle-fill { position: absolute; left: 0; bottom: 0; width: 100%; height: 0%; background: linear-gradient(#ffd97a, #ff9a3c); }
+  #throttle-label { position: absolute; left: calc(50% + 84px); bottom: 8px; width: 20px; text-align: center; font-size: 9px; letter-spacing: 0.1em; color: #cfe6ff; }
+
+  #target-marker { position: absolute; width: 26px; height: 26px; border: 3px solid #ffc93c; border-radius: 4px;
+    box-shadow: 0 0 10px rgba(255, 201, 60, 0.8), inset 0 0 6px rgba(255,201,60,0.5); display: none; }
+  #target-dist { position: absolute; transform: translateX(-50%); font-size: 14px; font-weight: 800; color: #ffd97a;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7); display: none; }
+
+  #warning { position: absolute; left: 50%; top: 21%; transform: translateX(-50%); font-size: 26px; font-weight: 900;
+    letter-spacing: 0.08em; color: #ff5347; text-shadow: 0 2px 6px rgba(0,0,0,0.7); display: none; animation: blink 0.5s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0.25; } }
+  #toast { position: absolute; left: 50%; top: 15%; transform: translateX(-50%); font-size: 24px; font-weight: 800;
+    color: #ffffff; text-shadow: 0 2px 8px rgba(0,0,0,0.75); opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); font-size: 120px; font-weight: 900;
+    color: #ffd97a; text-shadow: 0 4px 22px rgba(0,0,0,0.65); display: none; }
+
+  #cockpit-frame { position: fixed; inset: 0; pointer-events: none; display: none;
+    border-left: 46px solid rgba(16, 20, 26, 0.92); border-right: 46px solid rgba(16, 20, 26, 0.92); border-top: 30px solid rgba(16, 20, 26, 0.92); }
+  #cockpit-frame::after { content: ""; position: absolute; left: -46px; right: -46px; bottom: 0; height: 120px;
+    background: linear-gradient(rgba(16,20,26,0), rgba(16,20,26,0.95) 55%); }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+
+  /* ---------- overlays ---------- */
+  .overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: auto; }
+  .card { background: rgba(7, 18, 33, 0.82); border: 1px solid rgba(150, 200, 255, 0.4); border-radius: 16px;
+    padding: 26px 34px; text-align: center; max-width: 560px; box-shadow: 0 10px 44px rgba(0,0,0,0.55); backdrop-filter: blur(4px); }
+  .card h1 { margin: 0 0 4px; font-size: 44px; letter-spacing: 0.06em; color: #ffd97a; text-shadow: 0 3px 12px rgba(0,0,0,0.6); }
+  .card h2 { margin: 0 0 10px; font-size: 30px; color: #ffd97a; }
+  .card p.sub { margin: 0 0 16px; color: #cfe6ff; font-size: 15px; }
+  .controls { display: grid; grid-template-columns: auto auto; gap: 3px 18px; justify-content: center; text-align: left;
+    font-size: 14px; margin: 0 auto 16px; color: #d9ecff; }
+  .controls b { color: #ffffff; font-weight: 700; white-space: nowrap; }
+  .diff-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+  button { font: inherit; cursor: pointer; border-radius: 9px; border: 1px solid rgba(150,200,255,0.5);
+    background: rgba(30, 58, 96, 0.85); color: #eaf4ff; padding: 8px 16px; font-weight: 700; }
+  button:hover { background: rgba(46, 84, 136, 0.9); }
+  button.selected { background: #ffc93c; color: #23180a; border-color: #ffe1a0; }
+  #btn-start, #btn-again { font-size: 20px; padding: 12px 34px; background: #ffc93c; color: #23180a; border-color: #ffe1a0; }
+  #btn-start:hover, #btn-again:hover { background: #ffd35e; }
+  .small-row { margin-top: 12px; display: flex; gap: 8px; justify-content: center; }
+  #best-line { margin-top: 12px; font-size: 13px; color: #9fc6ee; }
+  .results-grid { display: grid; grid-template-columns: auto auto; gap: 5px 22px; justify-content: center; text-align: left; font-size: 17px; margin-bottom: 16px; }
+  .results-grid .label { color: #9fc6ee; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; align-self: center; }
+  .results-grid .value { font-weight: 800; font-variant-numeric: tabular-nums; }
+  #res-grade { font-size: 34px; color: #ffd97a; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<p id="status" role="status" aria-live="polite">Sky Ring Runner: fly the canyon, thread the glowing rings, land on the far runway.</p>
+
+<div id="hud">
+  <div class="panel" id="panel-left">
+    <div class="row"><span class="label">Altitude</span><span class="value" id="alt-value">0 m</span></div>
+    <div class="row"><span class="label">Speed</span><span class="value" id="speed-value">0 km/h</span></div>
+    <div class="row"><span class="label">Heading</span><span class="value" id="heading-value">000°</span></div>
+    <div id="compass"><div id="compass-strip"></div></div>
+  </div>
+  <div class="panel" id="panel-right">
+    <div class="row"><span class="label">Time</span><span class="value" id="time-value">0:00.0</span></div>
+    <div class="row"><span class="label">Rings</span><span class="value" id="rings-value">0 / 10</span></div>
+    <div class="row"><span class="label">Score</span><span class="value" id="score-value">0</span></div>
+  </div>
+  <div id="horizon-wrap">
+    <div id="horizon-ball"><div class="sky"></div><div class="gnd"></div><div class="line"></div></div>
+    <div id="horizon-fixed"></div><div id="horizon-dot"></div>
+  </div>
+  <div id="throttle-wrap"><div id="throttle-fill"></div></div>
+  <div id="throttle-label">THR</div>
+  <div id="target-marker"></div>
+  <div id="target-dist"></div>
+  <div id="warning"></div>
+  <div id="toast"></div>
+  <div id="countdown"></div>
+</div>
+
+<div id="cockpit-frame"></div>
+<div id="fade"></div>
+
+<div class="overlay" id="menu">
+  <div class="card">
+    <h1>SKY RING RUNNER</h1>
+    <p class="sub">Thread every glowing ring down the canyon, then land on the far runway.<br>Centre hits score more. Crashes cost 150.</p>
+    <div class="controls">
+      <b>W / Shift</b><span>throttle up (S / Ctrl down)</span>
+      <b>Arrow keys</b><span>pitch and bank (mouse steers too)</span>
+      <b>C</b><span>chase / cockpit camera</span>
+      <b>P or Esc</b><span>pause</span>
+      <b>R</b><span>restart the run</span>
+      <b>M</b><span>mute</span>
+    </div>
+    <div class="diff-row">
+      <button data-diff="easy">Easy · 6 rings</button>
+      <button data-diff="normal" class="selected">Normal · 10 rings</button>
+      <button data-diff="hard">Hard · 12 rings + wind</button>
+    </div>
+    <button id="btn-start">Take off</button>
+    <div class="small-row"><button id="btn-music">Music: on</button></div>
+    <div id="best-line">No flights yet — the canyon is waiting.</div>
+  </div>
+</div>
+
+<div class="overlay" id="results">
+  <div class="card">
+    <h2 id="res-title">Course complete!</h2>
+    <div class="results-grid">
+      <span class="label">Time</span><span class="value" id="res-time">0:00.0</span>
+      <span class="label">Rings</span><span class="value" id="res-rings">0 / 10</span>
+      <span class="label">Crashes</span><span class="value" id="res-crashes">0</span>
+      <span class="label">Score</span><span class="value" id="res-score">0</span>
+      <span class="label">Grade</span><span class="value" id="res-grade">C</span>
+    </div>
+    <button id="btn-again">Fly again</button>
+  </div>
+</div>
+
+<div class="overlay" id="pause">
+  <div class="card">
+    <h2>Paused</h2>
+    <div class="small-row">
+      <button id="btn-resume">Resume</button>
+      <button id="btn-restart">Restart run</button>
+    </div>
+  </div>
+</div>
+
+<script src="./vendor/three.min.js"></script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
