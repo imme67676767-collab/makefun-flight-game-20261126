@@ -595,6 +595,9 @@ function buildCockpit() {
   const hand = buildHand();
   hand.position.set(0, 0.40, 0);
   hand.rotation.set(0.22, -0.45, 0);
+  // Hidden: at cockpit-camera distance the low-poly hands read as pale
+  // blobs over the panel. The bare stick and throttle read cleaner.
+  hand.visible = false;
   stickPivot.add(hand);
   group.add(stickPivot);
 
@@ -610,6 +613,7 @@ function buildCockpit() {
   const throttleHand = buildThrottleHand();
   throttleHand.position.set(0, 0.26, 0);
   throttleHand.rotation.y = 0.6;
+  throttleHand.visible = false; // see stick hand note above
   throttlePivot.add(throttleHand);
   group.add(throttlePivot);
 

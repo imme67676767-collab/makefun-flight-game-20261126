@@ -46,17 +46,24 @@ export function autopilotInput(state, target) {
 export async function stageShot(name, game) {
   if (name === 'cockpit') {
     // First-person check scene: same approach as play, from the pilot's seat.
+    // Place the plane directly on the centre line ~110 m out and let it
+    // settle for a few steps: the autopilot can't converge to this ring
+    // from farther back (the canyon bends here and it overshoots), so a
+    // short settle from a good pose is the reliable staging. A mild roll
+    // bias gives the horizon a lively tilt.
     await game.reset(game.seed, 'normal', 'canyon', 'aerobatic');
     game.markRingsPassed(3);
     const ring = game.world.rings[3];
     const tangent = pathTangent(ring.centre.z);
-    const start = ring.centre.clone().addScaledVector(tangent, -520);
-    start.y = Math.max(start.y + 25, heightAt(start.x, start.z) + 90);
-    const yaw = Math.atan2(ring.centre.x - start.x, -(ring.centre.z - start.z));
-    placeInAir(game.state, start, yaw, 54, 0.72);
-    const steps = Math.round(2.2 / STEP);
+    const start = ring.centre.clone().addScaledVector(tangent, -110);
+    start.y = Math.max(start.y + 6, heightAt(start.x, start.z) + 60);
+    const yaw = Math.atan2(-(ring.centre.x - start.x), -(ring.centre.z - start.z)); // state.yaw = -heading (see forwardOf)
+    placeInAir(game.state, start, yaw, 60, 0.78);
+    const steps = Math.round(0.7 / STEP);
     for (let i = 0; i < steps; i++) {
-      game.step(STEP, autopilotInput(game.state, ring.centre));
+      const inp = autopilotInput(game.state, ring.centre);
+      inp.roll = Math.max(-0.55, Math.min(0.55, inp.roll + 0.15));
+      game.step(STEP, inp);
     }
     game.setMissionData({ ringsDone: 3, score: 1240, timeSec: 48.6 });
     game.showScreen('hud');
@@ -70,20 +77,29 @@ export async function stageShot(name, game) {
     game.markRingsPassed(6);
     const ring = game.world.rings[6];
     const tangent = pathTangent(ring.centre.z);
-    const start = ring.centre.clone().addScaledVector(tangent, -520);
-    start.y = Math.max(start.y + 25, heightAt(start.x, start.z) + 90);
-    const yaw = Math.atan2(ring.centre.x - start.x, -(ring.centre.z - start.z));
-    placeInAir(game.state, start, yaw, 54, 0.72);
-    // Fly the approach for a few seconds so the trails form and the
-    // plane settles into a natural bank toward the ring.
-    const steps = Math.round(2.8 / STEP);
-    for (let i = 0; i < steps; i++) {
-      game.step(STEP, autopilotInput(game.state, ring.centre));
+    // Straight run-in along the centre line: the autopilot's turn rate
+    // can't converge from a lateral or yaw offset at speed (it overshoots
+    // the ring entirely), so the drama comes from freezing close — at
+    // ~52 m out the glowing ring fills the frame around the plane (the
+    // chase camera sits 13.5 m back, so any closer spills past the frame
+    // edges). Start a touch below ring height for a climbing shot, and
+    // bias the roll in the last stretch so the plane freezes mid-bank.
+    const start = ring.centre.clone().addScaledVector(tangent, -340);
+    start.y = Math.max(start.y - 12, heightAt(start.x, start.z) + 65);
+    const yaw = Math.atan2(-(ring.centre.x - start.x), -(ring.centre.z - start.z)); // state.yaw = -heading (see forwardOf)
+    placeInAir(game.state, start, yaw, 60, 0.78);
+    const maxSteps = Math.round(10 / STEP);
+    for (let i = 0; i < maxSteps; i++) {
+      const inp = autopilotInput(game.state, ring.centre);
+      const dist = game.state.pos.distanceTo(ring.centre);
+      if (dist < 170) inp.roll = Math.max(-0.55, Math.min(0.55, inp.roll + 0.28));
+      game.step(STEP, inp);
+      if (dist < 52) break;
     }
-    game.setMissionData({ ringsDone: 6, score: 2480, timeSec: 96.2 });
-    // A boost in progress: the chip shows on the HUD and the FOV stretches,
-    // while the next pickup hangs between this ring and the following one.
+    // Boost live at the freeze: the chip shows on the HUD and the chase
+    // camera's FOV snap stretches wide.
     game.activateBoost();
+    game.setMissionData({ ringsDone: 6, score: 2480, timeSec: 96.2 });
     game.showScreen('hud');
     game.setChaseCamera(true);
     game.syncHud();
